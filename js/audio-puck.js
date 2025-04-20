@@ -1,0 +1,768 @@
+/**
+ * js/audio-puck.js
+ * Defines the AudioPuck class for managing individual audio sources.
+ * Handles loading, playback, effects, drawing, and interaction (drag, delete, toggle).
+ * Depends on global variables/objects: Tone, canvas, corners, isTransportRunning, hoveredPuckIndex, pucks (defined in main.js)
+ */
+
+// Convert a hex string to an RGB object.
+function hexToRgb(hex) {
+    // Remove # if present.
+    hex = hex.replace(/^#/, '');
+    if (hex.length === 3) {
+        // Expand shorthand form (e.g. "03F") to full form ("0033FF")
+        hex = hex.split('').map(x => x + x).join('');
+    }
+    const bigint = parseInt(hex, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return { r, g, b };
+}
+  
+// Inverts a color. Supports both hex and rgb/rgba strings.
+function invertColor(color) {
+    // If the color starts with a "#", convert to RGB first.
+    if (color.startsWith('#')) {
+        const { r, g, b } = hexToRgb(color);
+        return `rgb(${255 - r}, ${255 - g}, ${255 - b})`;
+    }
+  
+    // Otherwise, assume an rgb or rgba string.
+    const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    if (!rgbMatch) return color; // fallback
+    const r = 255 - parseInt(rgbMatch[1], 10);
+    const g = 255 - parseInt(rgbMatch[2], 10);
+    const b = 255 - parseInt(rgbMatch[3], 10);
+    if (rgbMatch[4] !== undefined) {
+        return `rgba(${r}, ${g}, ${b}, ${rgbMatch[4]})`;
+    }
+    return `rgb(${r}, ${g}, ${b})`;
+}
+  
+class AudioPuck {
+    constructor(index, audioUrl, filename, isRecorded = false) {
+        // console.log(`Creating AudioPuck ${index + 1}: ${filename}`);
+        this.index = index; // Store initial index
+        this.url = audioUrl;
+        this.filename = filename;
+        this.isRecorded = isRecorded;
+  
+        // Position & Appearance
+        const initialX = (canvas?.width / 2 || 300) + (Math.random() - 0.5) * 100;
+        const initialY = (canvas?.height / 2 || 300) + (Math.random() - 0.5) * 100;
+        this.x = initialX;
+        this.y = initialY;
+        this.radius = 20; // Initial radius, will be updated by setVolume
+        this.volumeValue = 0; // Volume in dB
+        this.deleteButtonRadius = 8; // Clickable radius for the delete button
+  
+        // Physics properties - initialize based on current physics settings
+        this.vx = 0;
+        this.vy = 0;
+        
+        // Get physics settings from the UI or use defaults
+        const frictionSlider = document.getElementById('friction-slider');
+        const bounceSlider = document.getElementById('bounce-slider');
+        const massSlider = document.getElementById('mass-slider');
+        
+        // Check if physics is enabled globally
+        const physicsButton = document.getElementById('physics-settings');
+        const isPhysicsEnabled = !physicsButton?.classList.contains('physics-off');
+        
+        if (isPhysicsEnabled) {
+            this.friction = frictionSlider ? parseFloat(frictionSlider.value) : 0.98;
+            this.bounce = bounceSlider ? parseFloat(bounceSlider.value) : 0.7;
+            this.mass = massSlider ? parseFloat(massSlider.value) : 1;
+        } else {
+            // If physics is disabled, set all physics properties to 0
+            this.friction = 0;
+            this.bounce = 0;
+            this.mass = 0;
+            this.vx = 0;
+            this.vy = 0;
+        }
+  
+        // Path recording/playback properties
+        this.isRecordingPath = false;     // True when user is recording a path
+        this.recordedPath = [];           // Array to store { time, x, y } points
+        this.recordingStartTime = 0;      // Timestamp when recording began
+        this.isPlayingPath = false;       // True when the puck is replaying a recorded path
+        this.playbackStartTime = 0;       // Timestamp when playback started
+        this.recordingDuration = 0;       // Total duration of the recorded path (ms)
+  
+        // State Flags
+        this.isPlaying = false; // Is the puck outputting audio (tied to Transport & mute)
+        this.isLoaded = false;
+        this.loadError = false;
+        this.willPlay = true;   // Should the puck play when Transport starts?
+        this.isMuted = false;   // Is the puck muted?
+        this.reverseActive = false; // Is reverse playback active? (Toggled by right click)
+
+        // Connection properties
+        this.connectedPucks = []; // Array to store references to connected pucks
+        this.isConnecting = false; // Flag to indicate if this puck is being used to create a connection
+        this.connectionLine = null; // Stores the current connection line coordinates when dragging
+  
+        try {
+            // --- Initialize Tone.js Nodes ---
+            this.delay = new Tone.FeedbackDelay({ delayTime: 0.25, feedback: 0.5, wet: 0 });
+            this.reverb = new Tone.Reverb({ decay: 2, wet: 0 });
+            this.distortion = new Tone.Distortion({ distortion: 0.6, wet: 0 });
+            this.eq = new Tone.EQ3({ low: 0, mid: 0, high: 0 });
+            // Initialize volume with mute state based on isMuted
+            this.volume = new Tone.Volume(this.volumeValue).toDestination();
+            this.volume.mute = this.isMuted;
+  
+            // Generate reverb impulse response asynchronously
+            this.reverb.generate().then(() => {
+                // Optional log: console.log(`Reverb generated for Puck ${pucks.indexOf(this) + 1}`);
+            }).catch(err => {
+                console.error(`Reverb generation failed for Puck ${pucks.indexOf(this) + 1}:`, err);
+            });
+  
+            // --- Initialize Tone.Player ---
+            this.player = new Tone.Player({
+                url: this.url,
+                autostart: false, // Controlled manually via sync() and Transport
+                loop: true,
+                fadeIn: 0.1,
+                fadeOut: 0.1,
+                onload: () => {
+                    const currentIdx = typeof pucks !== 'undefined' ? pucks.indexOf(this) : -1;
+                    console.log(`Puck ${currentIdx + 1} (${this.filename}) loaded successfully.`);
+                    this.isLoaded = true;
+                    this.loadError = false;
+                    this.setVolume(0); // Update radius based on initial volume
+  
+                    // If transport is running and the puck is armed, start immediately.
+                    const transportIsRunning = typeof isTransportRunning !== 'undefined' && isTransportRunning && Tone.Transport.state === 'started';
+                    if (transportIsRunning && this.willPlay) {
+                        console.log(`Puck ${currentIdx + 1}: Transport running, starting immediately.`);
+                        this.player.sync().start(0);
+                        this.isPlaying = true;
+                    } else {
+                        this.isPlaying = false;
+                    }
+                    if (this.volume) this.volume.mute = this.isMuted;
+  
+                },
+                onerror: (error) => {
+                    const currentIdx = typeof pucks !== 'undefined' ? pucks.indexOf(this) : -1;
+                    console.error(`Error loading audio for Puck ${currentIdx + 1} (${this.filename}):`, error);
+                    this.loadError = true;
+                    this.isLoaded = false;
+                    this.isPlaying = false;
+                    alert(`Error loading: ${this.filename}. Unsupported format or network issue? Check console.`);
+                }
+            }).chain(this.delay, this.reverb, this.distortion, this.eq, this.volume);
+  
+            this.updateEffects(); // Initialize effect levels based on initial position
+  
+        } catch (error) {
+            const currentIdx = typeof pucks !== 'undefined' ? pucks.indexOf(this) : index;
+            console.error(`FATAL: Error during AudioPuck ${currentIdx + 1} (${this.filename}) constructor:`, error);
+            this.loadError = true;
+            alert(`Failed to initialize audio components for ${this.filename}. See console.`);
+        }
+    }
+
+    // Called when the user starts dragging with shift pressed
+    startPathRecording() {
+        this.isRecordingPath = true;
+        this.recordedPath = [];
+        this.recordingStartTime = performance.now();
+        this.isPlayingPath = false; // Stop any existing playback
+        console.log(`AudioPuck "${this.filename}" started path recording.`);
+    }
+
+    // Call this on each drag update while shift is held to record the current position.
+    recordPathPoint() {
+        if (!this.isRecordingPath) return;
+        const timeStamp = performance.now() - this.recordingStartTime;
+        this.recordedPath.push({ time: timeStamp, x: this.x, y: this.y });
+    }
+
+    // Called when the Shift key is released (or drag ends while Shift not active)
+    stopPathRecording() {
+        if (!this.isRecordingPath) return;
+        this.isRecordingPath = false;
+        if (this.recordedPath.length > 0) {
+            this.recordingDuration = this.recordedPath[this.recordedPath.length - 1].time;
+            this.isPlayingPath = true;
+            this.playbackStartTime = performance.now();
+            console.log(`AudioPuck "${this.filename}" stopped recording. Duration: ${this.recordingDuration} ms. Starting playback loop.`);
+        }
+    }
+
+    // During each update, if playing back a recorded path, this method interpolates the position.
+    updatePathPlayback() {
+        if (!this.isPlayingPath || this.recordingDuration === 0) return;
+        // Calculate elapsed time (looped)
+        const elapsed = (performance.now() - this.playbackStartTime) % this.recordingDuration;
+        
+        // Find recorded points bracketing the elapsed time
+        let startPoint = this.recordedPath[0];
+        let endPoint = this.recordedPath[this.recordedPath.length - 1];
+        for (let i = 0; i < this.recordedPath.length - 1; i++) {
+            if (this.recordedPath[i].time <= elapsed && this.recordedPath[i+1].time >= elapsed) {
+                startPoint = this.recordedPath[i];
+                endPoint = this.recordedPath[i+1];
+                break;
+            }
+        }
+        // Compute ratio (avoid division by zero)
+        const interval = (endPoint.time - startPoint.time) || 1;
+        const ratio = (elapsed - startPoint.time) / interval;
+        // Linearly interpolate between the two points
+        this.x = startPoint.x + ratio * (endPoint.x - startPoint.x);
+        this.y = startPoint.y + ratio * (endPoint.y - startPoint.y);
+    }
+  
+    /**
+     * Toggles the playback state (mute or willPlay) based on Tone.Transport's state.
+     */
+    togglePlayback() {
+        const currentIdx = typeof pucks !== 'undefined' ? pucks.indexOf(this) : -1;
+        if (!this.isLoaded || this.loadError) {
+            console.log(`Puck ${currentIdx + 1}: Cannot toggle playback - not loaded or error.`);
+            return;
+        }
+  
+        const transportIsRunning = typeof isTransportRunning !== 'undefined' && isTransportRunning && Tone.Transport.state === 'started';
+        if (transportIsRunning) {
+            // When running: Toggle mute.
+            this.isMuted = !this.isMuted;
+            if (this.volume) {
+                this.volume.mute = this.isMuted;
+            }
+            this.isPlaying = !this.isMuted;
+            console.log(`Puck ${currentIdx + 1} (${this.filename}): Mute toggled to ${this.isMuted}. IsPlaying set to ${this.isPlaying}`);
+        } else {
+            // When stopped: Toggle armed state.
+            this.willPlay = !this.willPlay;
+            console.log(`Puck ${currentIdx + 1} (${this.filename}): WillPlay toggled to ${this.willPlay}`);
+            this.isPlaying = false;
+        }
+    }
+  
+    /**
+     * Calculates the position for the delete button.
+     */
+    getDeleteButtonPosition() {
+        const angle = -Math.PI / 4; // Top-right direction (-45 degrees)
+        const cosAngle = Math.cos(angle);
+        const sinAngle = Math.sin(angle);
+        const minCenterDistance = this.deleteButtonRadius + 6; // Minimum distance (8px + 6px padding)
+        const idealDistance = this.radius;
+        const actualDistance = Math.max(idealDistance, minCenterDistance);
+        const offsetX = cosAngle * actualDistance;
+        const offsetY = sinAngle * actualDistance;
+        return { x: this.x + offsetX, y: this.y + offsetY };
+    }
+  
+    /**
+     * Draws the puck, including its audio state, number label, and (if hovered) delete button.
+     * When reverse playback is active, the puck's fill color is inverted.
+     */
+    draw(ctx) {
+        if (!ctx) return;
+        ctx.save();
+  
+        const currentIdx = pucks.indexOf(this);
+        const transportIsRunning = isTransportRunning && Tone.Transport.state === 'started';
+  
+        // Draw connection lines to connected pucks first (so they appear behind the puck)
+        this.connectedPucks.forEach(connectedPuck => {
+            ctx.shadowColor = 'rgba(108, 99, 255, 0.5)'; // Accent color with transparency
+            ctx.shadowBlur = 5;
+            ctx.strokeStyle = 'rgba(108, 99, 255, 0.4)'; // Accent color
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(this.x, this.y);
+            ctx.lineTo(connectedPuck.x, connectedPuck.y);
+            ctx.stroke();
+            // Reset shadow
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+        });
+  
+        // Draw active connection line if this puck is being used to create a connection
+        if (this.isConnecting && this.connectionStartPoint && this.connectionEndPoint) {
+            // Use grey for non-snapping state, accent color for snapping
+            const lineColor = this.isSnapping ? 'rgba(108, 99, 255, 0.8)' : 'rgba(150, 150, 150, 0.4)';
+            const shadowColor = this.isSnapping ? 'rgba(108, 99, 255, 0.5)' : 'rgba(150, 150, 150, 0.3)';
+            
+            ctx.shadowColor = shadowColor;
+            ctx.shadowBlur = this.isSnapping ? 5 : 3;
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // Dashed line for active connection
+            
+            ctx.beginPath();
+            ctx.moveTo(this.connectionStartPoint.x, this.connectionStartPoint.y);
+            ctx.lineTo(this.connectionEndPoint.x, this.connectionEndPoint.y);
+            ctx.stroke();
+            
+            // Draw a circle at the end of the line when snapping
+            if (this.isSnapping) {
+                ctx.beginPath();
+                ctx.arc(this.connectionEndPoint.x, this.connectionEndPoint.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(108, 99, 255, 0.8)';
+                ctx.fill();
+            }
+            
+            // Reset line style and shadow
+            ctx.setLineDash([]);
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+        }
+  
+        // Determine overall opacity (dimmed if muted or not armed)
+        let puckOpacity = 1.0;
+        if ((transportIsRunning && this.isMuted) || (!transportIsRunning && !this.willPlay)) {
+            puckOpacity = 0.55;
+        }
+  
+        // Determine base fill color.
+        const puckColorPlaying = getComputedStyle(document.documentElement)
+            .getPropertyValue('--accent-color').trim() || '#6c63ff';
+        const puckColorStopped = 'rgba(240, 240, 240, 0.85)';
+        let currentFill = (this.willPlay || transportIsRunning) ? puckColorPlaying : puckColorStopped;
+        if (this.loadError) {
+            currentFill = 'rgba(255, 180, 0, 0.8)';
+        } else if (!this.isLoaded) {
+            currentFill = 'rgba(150, 150, 150, 0.7)';
+        }
+  
+        // Invert the fill color if reverse mode is active.
+        if (this.reverseActive) {
+            currentFill = invertColor(currentFill);
+        }
+  
+        // Draw the puck circle with a shadow.
+        ctx.shadowColor = currentFill;
+        ctx.shadowBlur = 15;
+        ctx.globalAlpha = puckOpacity;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = currentFill;
+        ctx.fill();
+  
+        // Reset shadow and opacity for text.
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1.0;
+  
+        // Determine text color based on state.
+        let textColor = (this.willPlay || transportIsRunning) ? 'white' : 'black';
+        if (this.loadError || !this.isLoaded) textColor = 'white';
+        if (puckOpacity < 1.0) {
+            textColor = (this.willPlay || transportIsRunning) ? 'rgba(220, 220, 220, 0.8)' : 'rgba(100, 100, 100, 0.8)';
+            if (this.loadError || !this.isLoaded) textColor = 'rgba(220, 220, 220, 0.8)';
+        }
+  
+        ctx.fillStyle = textColor;
+        ctx.font = `bold ${Math.max(10, this.radius * 0.6)}px Poppins`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+  
+        const displayIndex = currentIdx + 1;
+        ctx.fillText(displayIndex > 0 ? displayIndex : '?', this.x, this.y);
+  
+        // Draw hover info and delete button if this puck is hovered.
+        const currentHoverIndex = typeof hoveredPuckIndex !== 'undefined' ? hoveredPuckIndex : null;
+        if (currentHoverIndex === currentIdx) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.font = '12px Poppins';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+  
+            let stateText = '';
+            if (this.loadError) stateText = 'Load Error!';
+            else if (!this.isLoaded) stateText = 'Loading...';
+            else if (transportIsRunning) {
+                stateText = this.willPlay ? (this.isMuted ? 'Playing (Muted)' : 'Playing') : 'Stopped';
+            } else {
+                stateText = this.willPlay ? 'Ready' : 'Paused';
+            }
+  
+            const displayName = this.filename.length > 25 ? this.filename.substring(0, 22) + '...' : this.filename;
+            const textX = this.x + this.radius + 8;
+            const textY = this.y + this.radius + 4;
+            ctx.fillText(`${displayName} (${stateText})`, textX, textY);
+            const volumeText = `Vol: ${this.volumeValue.toFixed(1)} dB`;
+            ctx.fillText(volumeText, textX, textY + 14);
+            this.drawDeleteButton(ctx);
+        }
+        // Draw the path indicator if a recorded path exists.
+        if (this.recordedPath.length > 0) {
+            ctx.save();
+            // You can adjust the stroke style, width, etc. to match your design.
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white line.
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Start at the first recorded point.
+            ctx.moveTo(this.recordedPath[0].x, this.recordedPath[0].y);
+            // Draw a line through all recorded points.
+            for (let i = 1; i < this.recordedPath.length; i++) {
+                ctx.lineTo(this.recordedPath[i].x, this.recordedPath[i].y);
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        ctx.restore();
+    }
+  
+    /** Draws the delete 'X' button with a themed gradient and shadow. */
+    drawDeleteButton(ctx) {
+        const pos = this.getDeleteButtonPosition();
+        const r = this.deleteButtonRadius;
+        const crossSize = r * 0.55;
+  
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetX = 1;
+        ctx.shadowOffsetY = 1;
+  
+        const gradient = ctx.createRadialGradient(pos.x - r * 0.1, pos.y - r * 0.1, 0, pos.x, pos.y, r * 1.5);
+        gradient.addColorStop(0, 'rgba(70, 70, 80, 0.85)');
+        gradient.addColorStop(1, 'rgba(30, 30, 40, 0.90)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+        ctx.fill();
+  
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+  
+        ctx.strokeStyle = 'rgba(255, 80, 80, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(pos.x - crossSize, pos.y - crossSize);
+        ctx.lineTo(pos.x + crossSize, pos.y + crossSize);
+        ctx.moveTo(pos.x + crossSize, pos.y - crossSize);
+        ctx.lineTo(pos.x - crossSize, pos.y + crossSize);
+        ctx.stroke();
+  
+        ctx.restore();
+    }
+  
+    /** Checks if the provided mouse coordinates hit the delete button area. */
+    isDeleteHit(mx, my) {
+        const pos = this.getDeleteButtonPosition();
+        const dx = mx - pos.x;
+        const dy = my - pos.y;
+        return (dx * dx + dy * dy) <= (this.deleteButtonRadius * this.deleteButtonRadius);
+    }
+  
+    /** Checks if the provided mouse coordinates are inside the puck's main body. */
+    isHit(mx, my) {
+        const dx = mx - this.x;
+        const dy = my - this.y;
+        return (dx * dx + dy * dy) <= (this.radius * this.radius);
+    }
+  
+    /** Updates the wet levels of effects based on the puck's proximity to canvas corners. */
+    updateEffects() {
+        if (!this.isLoaded || this.loadError) {
+            if (this.delay) this.delay.wet.value = 0;
+            if (this.reverb) this.reverb.wet.value = 0;
+            if (this.distortion) this.distortion.wet.value = 0;
+            if (this.eq) this.eq.low.value = 0;
+            return;
+        }
+        const d = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const currentWidth = canvas?.width || window.innerWidth;
+        const currentHeight = canvas?.height || window.innerHeight;
+        const maxDist = Math.hypot(currentWidth, currentHeight);
+        if (maxDist === 0) return;
+  
+        const delayProx = 1 - Math.min(d(this, corners.delay) / maxDist, 1);
+        const reverbProx = 1 - Math.min(d(this, corners.reverb) / maxDist, 1);
+        const distortionProx = 1 - Math.min(d(this, corners.distortion) / maxDist, 1);
+        const eqProx = 1 - Math.min(d(this, corners.eq) / maxDist, 1);
+  
+        const rampTime = Tone.now() + 0.05;
+        if (this.delay) this.delay.wet.linearRampToValueAtTime(delayProx * 0.5, rampTime);
+        if (this.reverb) this.reverb.wet.linearRampToValueAtTime(reverbProx, rampTime);
+        if (this.distortion) this.distortion.wet.linearRampToValueAtTime(distortionProx * 0.5, rampTime);
+        if (this.eq) {
+            const eqDB = (eqProx - 0.5) * 24;
+            this.eq.low.linearRampToValueAtTime(eqDB, rampTime);
+        }
+    }
+  
+    /** Adjusts the volume in dB and updates the puck's radius accordingly. */
+    setVolume(delta) {
+        const dbChange = delta > 0 ? -2 : 2; // Scrolling: down/away decreases volume
+        const currentVol = this.volumeValue;
+        const minVolDb = -48;
+        const maxVolDb = 6;
+        this.volumeValue = Math.max(minVolDb, Math.min(maxVolDb, currentVol + dbChange));
+        if (this.volume?.volume) {
+            if (this.isLoaded && Tone.context.state === 'running') {
+                this.volume.volume.linearRampToValueAtTime(this.volumeValue, Tone.now() + 0.05);
+            } else {
+                this.volume.volume.value = this.volumeValue;
+            }
+        }
+        const minRadius = 12;
+        const maxRadius = 35;
+        const norm = (this.volumeValue - minVolDb) / (maxVolDb - minVolDb);
+        this.radius = minRadius + Math.max(0, Math.min(1, norm)) * (maxRadius - minRadius);
+    }
+  
+    /** Cleanly disposes of all Tone.js resources associated with this puck. */
+    dispose() {
+        const currentIndex = typeof pucks !== 'undefined' ? pucks.indexOf(this) : -1;
+        console.log(`Disposing Puck index ${currentIndex} (${this.filename})`);
+        try {
+            if (this.player) {
+                this.player.stop();
+                this.player.unsync();
+                this.player.dispose();
+            }
+            if (this.delay) this.delay.dispose();
+            if (this.reverb) this.reverb.dispose();
+            if (this.distortion) this.distortion.dispose();
+            if (this.eq) this.eq.dispose();
+            if (this.volume) this.volume.dispose();
+        } catch (e) {
+            console.error(`Error during Tone node disposal for Puck index ${currentIndex}:`, e);
+        } finally {
+            this.player = null;
+            this.delay = null;
+            this.reverb = null;
+            this.distortion = null;
+            this.eq = null;
+            this.volume = null;
+            this.isLoaded = false;
+            this.isPlaying = false;
+            console.log(`Finished disposing Puck index ${currentIndex}`);
+        }
+    }
+  
+    /** Updates the puck's position based on its velocity and handles collisions. */
+    update() {
+        if (this.isPlayingPath) {
+            // When playing back the recorded path, update the position accordingly.
+            this.updatePathPlayback();
+            this.updateEffects();
+            return;
+        }
+        if (!this.isRecordingPath && !this.isConnecting) { // Don't update physics during connection
+            // Normal physics update if not recording.
+            this.vx *= this.friction;
+            this.vy *= this.friction;
+            this.x += this.vx;
+            this.y += this.vy;
+            this.handleEdgeCollisions();
+            this.handlePuckCollisions();
+            if (typeof this.updateEffects === 'function') {
+                this.updateEffects();
+            }
+        }
+    }
+  
+    /** Handles collisions with the canvas edges. */
+    handleEdgeCollisions() {
+        if (this.x - this.radius < 0) {
+            this.x = this.radius;
+            this.vx = -this.vx * this.bounce;
+        }
+        if (this.x + this.radius > canvas.width) {
+            this.x = canvas.width - this.radius;
+            this.vx = -this.vx * this.bounce;
+        }
+        if (this.y - this.radius < 0) {
+            this.y = this.radius;
+            this.vy = -this.vy * this.bounce;
+        }
+        if (this.y + this.radius > canvas.height) {
+            this.y = canvas.height - this.radius;
+            this.vy = -this.vy * this.bounce;
+        }
+    }
+  
+    /** Handles collisions with other pucks. */
+    handlePuckCollisions() {
+        if (!pucks || this.mass === 0) return; // Skip if physics is disabled (mass = 0)
+        
+        for (const otherPuck of pucks) {
+            if (otherPuck === this || otherPuck.mass === 0) continue; // Skip if other puck has physics disabled
+            
+            const dx = otherPuck.x - this.x;
+            const dy = otherPuck.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < this.radius + otherPuck.radius) {
+                const nx = dx / distance;
+                const ny = dy / distance;
+                const relativeVx = this.vx - otherPuck.vx;
+                const relativeVy = this.vy - otherPuck.vy;
+                const velocityAlongNormal = relativeVx * nx + relativeVy * ny;
+                
+                if (velocityAlongNormal > 0) continue;
+                
+                const restitution = Math.min(this.bounce, otherPuck.bounce);
+                const j = -(1 + restitution) * velocityAlongNormal;
+                const impulse = j / (1 / this.mass + 1 / otherPuck.mass);
+                
+                this.vx -= (impulse * nx) / this.mass;
+                this.vy -= (impulse * ny) / this.mass;
+                otherPuck.vx += (impulse * nx) / otherPuck.mass;
+                otherPuck.vy += (impulse * ny) / otherPuck.mass;
+                
+                const overlap = (this.radius + otherPuck.radius - distance) / 2;
+                this.x -= overlap * nx;
+                this.y -= overlap * ny;
+                otherPuck.x += overlap * nx;
+                otherPuck.y += overlap * ny;
+            }
+        }
+    }
+  
+    /**
+     * Toggles reverse playback for the puck.
+     * This sets the Tone.Player's reverse property and updates the local flag.
+     */
+    toggleReversePlayback() {
+        if (this.player) {
+            this.player.reverse = !this.player.reverse;
+            this.reverseActive = this.player.reverse;
+            console.log(`AudioPuck "${this.filename}" reverse playback: ${this.player.reverse}`);
+        }
+    }
+
+    // Add connection methods
+    startConnection(mouseX, mouseY) {
+        this.isConnecting = true;
+        // Initialize connection points - start point is fixed at puck's center
+        this.connectionStartPoint = { x: this.x, y: this.y };
+        this.connectionEndPoint = { x: mouseX, y: mouseY };
+        // Store the initial path state
+        this.wasPlayingPath = this.isPlayingPath;
+        this.wasRecordingPath = this.isRecordingPath;
+        // Pause any path movement
+        this.isPlayingPath = false;
+        this.isRecordingPath = false;
+        // Store initial velocities
+        this.storedVx = this.vx;
+        this.storedVy = this.vy;
+        // Initialize snap state
+        this.isSnapping = false;
+        this.snapTarget = null;
+    }
+
+    updateConnection(mouseX, mouseY) {
+        if (this.isConnecting) {
+            // Update the end point of the connection line
+            this.connectionEndPoint = { x: mouseX, y: mouseY };
+            
+            // Check for nearby pucks to snap to
+            let closestPuck = null;
+            let minDistance = 100; // Snap radius in pixels
+            
+            for (const puck of pucks) {
+                if (puck === this) continue;
+                
+                const dx = mouseX - puck.x;
+                const dy = mouseY - puck.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestPuck = puck;
+                }
+            }
+            
+            // If we found a puck to snap to, smoothly transition to its position
+            if (closestPuck) {
+                // Smooth transition to the target position
+                const transitionSpeed = 0.2;
+                this.connectionEndPoint.x += (closestPuck.x - this.connectionEndPoint.x) * transitionSpeed;
+                this.connectionEndPoint.y += (closestPuck.y - this.connectionEndPoint.y) * transitionSpeed;
+                this.isSnapping = true;
+                this.snapTarget = closestPuck;
+            } else {
+                this.isSnapping = false;
+                this.snapTarget = null;
+            }
+        }
+    }
+
+    endConnection(targetPuck) {
+        if (!targetPuck || targetPuck === this) return;
+
+        // Create the connection
+        this.connectedPucks.push(targetPuck);
+        targetPuck.connectedPucks.push(this);
+
+        // Get all unique connected pucks in the network
+        const allConnectedPucks = new Set([...this.connectedPucks, ...targetPuck.connectedPucks]);
+        
+        // Check if we have a multiple of 3 pucks
+        if (allConnectedPucks.size % 3 === 0) {
+            // Find the most recently connected pucks (the last 3 in the network)
+            const recentPucks = Array.from(allConnectedPucks).slice(-3);
+            
+            // Ensure all three pucks are connected to each other
+            for (let i = 0; i < recentPucks.length; i++) {
+                for (let j = i + 1; j < recentPucks.length; j++) {
+                    const puck1 = recentPucks[i];
+                    const puck2 = recentPucks[j];
+                    
+                    // Connect if not already connected
+                    if (!puck1.connectedPucks.includes(puck2)) {
+                        puck1.connectedPucks.push(puck2);
+                        puck2.connectedPucks.push(puck1);
+                    }
+                }
+            }
+        }
+
+        this.isConnecting = false;
+        this.connectionLine = null;
+        this.snapTarget = null;
+    }
+
+    cancelConnection() {
+        this.isConnecting = false;
+        this.connectionStartPoint = null;
+        this.connectionEndPoint = null;
+        this.isSnapping = false;
+        this.snapTarget = null;
+        // Restore path state
+        this.isPlayingPath = this.wasPlayingPath;
+        this.isRecordingPath = this.wasRecordingPath;
+        // Restore velocities
+        this.vx = this.storedVx;
+        this.vy = this.storedVy;
+    }
+
+    disconnectFrom(puck) {
+        const index = this.connectedPucks.indexOf(puck);
+        if (index !== -1) {
+            this.connectedPucks.splice(index, 1);
+            // Also remove this puck from the other puck's connections
+            const otherIndex = puck.connectedPucks.indexOf(this);
+            if (otherIndex !== -1) {
+                puck.connectedPucks.splice(otherIndex, 1);
+            }
+        }
+    }
+
+    disconnectAll() {
+        // Create a copy of the array to avoid modification during iteration
+        const connectedPucksCopy = [...this.connectedPucks];
+        for (const puck of connectedPucksCopy) {
+            this.disconnectFrom(puck);
+        }
+    }
+} // End of AudioPuck Class

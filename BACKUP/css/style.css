@@ -1,0 +1,499 @@
+/* css/style.css */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+:root {
+    --bg-color-start: #1f2128; /* Darker start */
+    --bg-color-mid: #272932;
+    --bg-color-end: #1a1c23;   /* Darker end */
+    --accent-color: #6c63ff; /* Changed accent to a purple */
+    --puck-color-stopped: rgba(240, 240, 240, 0.85); /* Slightly transparent white */
+    --puck-color-playing: var(--accent-color); /* Use accent for playing */
+    --text-color: rgba(230, 230, 230, 0.9);
+    --label-color: rgba(255, 255, 255, 0.5); /* Subtler labels */
+    --glow-color-base: rgba(108, 99, 255, 0.7); /* Base glow matching accent */
+    --glow-color-recorded: rgba(255, 80, 80, 0.8); /* More distinct red glow */
+
+    --shadow-light: rgba(255, 255, 255, 0.05);
+    --shadow-dark: rgba(0, 0, 0, 0.4);
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Poppins', sans-serif; /* Use Poppins font */
+    /* Subtle radial gradient background */
+    background: radial-gradient(ellipse at center, var(--bg-color-mid) 0%, var(--bg-color-start) 70%, var(--bg-color-end) 100%);
+    color: var(--text-color);
+}
+
+/* Canvas and Wrapper */
+#canvas-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+}
+
+#xy-pad {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair; /* Changed cursor */
+    position: relative;
+    background-color: transparent; /* Canvas itself is transparent */
+}
+#xy-pad:active {
+    cursor: grabbing;
+}
+
+/* Top Controls (Button Container) */
+#button-container {
+    position: absolute;
+    top: 25px; /* Slightly lower */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 15px; /* Increased gap */
+    background-color: rgba(30, 30, 40, 0.6); /* Darker, slightly transparent */
+    padding: 10px 20px;
+    border-radius: 30px; /* Fully rounded ends */
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5),
+                inset 0 1px 1px rgba(255, 255, 255, 0.05); /* Subtle inset highlight */
+    backdrop-filter: blur(5px); /* Frosted glass effect */
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.control-button, #file-input-container {
+    background: linear-gradient(145deg, var(--bg-color-mid), var(--bg-color-start)); /* Subtle gradient */
+    border: none;
+    color: var(--text-color);
+    padding: 0; /* Padding handled by size */
+    font-size: 16px; /* Icon size */
+    cursor: pointer;
+    border-radius: 50%;
+    width: 45px; /* Slightly larger */
+    height: 45px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Smooth, bouncy transition */
+    position: relative;
+    box-shadow: 5px 5px 10px var(--shadow-dark),
+                -5px -5px 10px var(--shadow-light),
+                inset 1px 1px 1px var(--shadow-light), /* Inner highlight */
+                inset -1px -1px 1px var(--shadow-dark); /* Inner shadow */
+    outline: none;
+}
+
+/* Tooltip Base */
+.control-button::before, #file-input-container::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px); /* Slightly more space */
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(20, 20, 25, 0.9); /* Darker tooltip bg */
+    color: var(--text-color);
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 300;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.2s ease;
+    z-index: 11;
+    pointer-events: none; /* Prevent tooltip intercepting mouse */
+}
+
+/* Show Tooltip on Hover */
+.control-button:hover::before, #file-input-container:hover::before {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(-3px); /* Slight lift */
+}
+
+.control-button:hover, #file-input-container:hover {
+    transform: scale(1.08); /* Slightly larger scale on hover */
+    box-shadow: 7px 7px 15px var(--shadow-dark), /* Enhanced shadow on hover */
+                -7px -7px 15px var(--shadow-light),
+                inset 1px 1px 1px var(--shadow-light),
+                inset -1px -1px 1px var(--shadow-dark);
+    color: var(--accent-color); /* Icon color change on hover */
+}
+
+.control-button:active, #file-input-container:active {
+    transform: scale(0.95); /* Push down effect */
+    box-shadow: inset 3px 3px 7px var(--shadow-dark), /* Inset shadow when pressed */
+                inset -3px -3px 7px var(--shadow-light);
+    color: var(--accent-color);
+}
+
+/* Add this rule to your existing style.css */
+.control-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: #555; /* Darker background when disabled */
+    box-shadow: inset 2px 2px 4px rgba(0,0,0,0.5),
+                inset -2px -2px 4px rgba(255,255,255,0.1); /* Less pronounced shadow */
+    transform: scale(1); /* No scale change */
+    color: #aaa; /* Dimmer icon */
+}
+.control-button:disabled:hover {
+     background: #555; /* No hover effect */
+     color: #aaa;
+     transform: scale(1);
+}
+.control-button:disabled::before {
+    display: none; /* Hide tooltip when disabled */
+}
+
+/* Style the file input to be visually hidden but accessible */
+#file-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 11;
+}
+
+/* Recording Button Style */
+#record-btn.recording {
+    background: var(--accent-color); /* Use accent color */
+    color: white;
+    animation: pulse-record 1.5s infinite ease-in-out;
+}
+#record-btn.recording i {
+    color: white; /* Ensure icon is white when recording */
+}
+@keyframes pulse-record {
+    0%   { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.8), 5px 5px 10px var(--shadow-dark), -5px -5px 10px var(--shadow-light); }
+    70%  { box-shadow: 0 0 0 10px rgba(233, 69, 96, 0), 5px 5px 10px var(--shadow-dark), -5px -5px 10px var(--shadow-light); }
+    100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0), 5px 5px 10px var(--shadow-dark), -5px -5px 10px var(--shadow-light); }
+}
+
+/* Effect Labels in corners */
+#labels {
+    position: absolute;
+    width: calc(100% - 60px); /* Add padding */
+    height: calc(100% - 60px);
+    top: 30px; left: 30px;
+    pointer-events: none;
+    z-index: 5;
+}
+.label {
+    position: absolute;
+    font-size: 14px; /* Slightly smaller */
+    font-weight: 600; /* Bolder */
+    color: var(--label-color);
+    text-transform: uppercase; /* Consistent casing */
+    letter-spacing: 1px; /* More spacing */
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.7);
+    opacity: 0.8; /* Slightly faded */
+}
+.top-left { top: 0; left: 0; }
+.top-right { top: 0; right: 0; text-align: right; }
+.bottom-left { bottom: 0; left: 0; }
+.bottom-right { bottom: 0; right: 0; text-align: right;}
+
+/* === LLM Controls Styling (Matching Top Buttons Aesthetic) === */
+
+/* 
+   We reposition the container to fixed, so it can float above the canvas,
+   and hide it by default. 
+*/
+#llm-controls-container {
+    position: fixed;
+    bottom: 60px; /* Enough room for toggle button below */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11;
+    width: 80%;
+    max-width: 700px;
+    display: none; /* Hide by default */
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background-color: rgba(20, 22, 28, 0.5);
+    border-radius: 10px;
+    box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+#llm-prompt-area {
+    display: flex;
+    width: 100%;
+    gap: 10px;
+    align-items: center;
+}
+
+#llm-prompt-input {
+    flex-grow: 1;
+    padding: 12px 15px;
+    font-size: 14px;
+    font-family: 'Poppins', sans-serif;
+    background-color: rgba(40, 42, 50, 0.8);
+    color: var(--text-color);
+    /* Match button rounding */
+    border-radius: 30px; /* Use same rounding as buttons */
+    border: 1px solid rgba(255, 255, 255, 0.1); /* Subtle border */
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#llm-prompt-input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.3);
+}
+
+#llm-prompt-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+/* General LLM button style - ADAPTED FROM .control-button */
+.llm-button {
+    background: linear-gradient(145deg, var(--bg-color-mid), var(--bg-color-start)); /* Match gradient */
+    border: none; /* Match border */
+    color: var(--text-color); /* Match text color */
+    cursor: pointer;
+    border-radius: 30px; /* Rounded ends like top button container */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* Adjust padding for text */
+    padding: 10px 20px;
+    font-size: 14px; /* Slightly smaller font than icons */
+    font-family: 'Poppins', sans-serif;
+    font-weight: 400;
+    /* Use same transition */
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    position: relative; /* For tooltip */
+    /* Use same shadow */
+    box-shadow: 5px 5px 10px var(--shadow-dark),
+                -5px -5px 10px var(--shadow-light),
+                inset 1px 1px 1px var(--shadow-light), /* Inner highlight */
+                inset -1px -1px 1px var(--shadow-dark); /* Inner shadow */
+    outline: none;
+    white-space: nowrap;
+    min-height: 45px; /* Match height of top buttons */
+    box-sizing: border-box; /* Include padding/border in height */
+}
+
+.llm-button i {
+    margin-right: 8px; /* Space between icon and text */
+    font-size: 1.1em; /* Slightly larger icon */
+    line-height: 1; /* Ensure icon aligns well */
+}
+/* Mic button is icon-only */
+#llm-mic-btn i {
+    margin-right: 0;
+}
+
+.llm-start-button {
+    font-weight: 600; /* Make Start text bolder */
+}
+
+#llm-generation-buttons {
+    display: flex;
+    width: 100%;
+    gap: 15px;
+    justify-content: center;
+}
+
+.llm-generate-button {
+    flex-grow: 1;
+    max-width: 200px;
+    font-weight: 600; /* Make Drum/Melody text bolder */
+}
+
+/* Tooltips for LLM buttons */
+.llm-button::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 8px); /* More space like top buttons */
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(20, 20, 25, 0.9); /* Match tooltip style */
+    color: var(--text-color);
+    padding: 5px 10px; /* Match tooltip style */
+    border-radius: 5px; /* Match tooltip style */
+    font-size: 12px; /* Match tooltip style */
+    font-weight: 300; /* Match tooltip style */
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.2s ease; /* Match tooltip style */
+    z-index: 11;
+    pointer-events: none;
+}
+
+.llm-button:hover::before {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(3px); /* Match tooltip lift */
+}
+
+/* --- Ensure Canvas Wrapper is correct --- */
+#canvas-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+}
+
+/* Labels positioning */
+#labels {
+    position: absolute;
+    width: calc(100% - 60px);
+    height: calc(100% - 60px);
+    top: 30px; left: 30px;
+    pointer-events: none;
+    z-index: 5;
+}
+.top-left { top: 0; left: 0; }
+.top-right { top: 0; right: 0; text-align: right; }
+.bottom-left { bottom: 0; left: 0; }
+.bottom-right { bottom: 0; right: 0; text-align: right;}
+
+.settings-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(30, 30, 40, 0.95);
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    display: none;
+    color: white;
+    min-width: 300px;
+}
+
+.settings-panel h3 {
+    margin-top: 0;
+    color: #6c63ff;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.setting-group {
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.setting-group label {
+    flex: 1;
+    margin-right: 10px;
+}
+
+.setting-group input[type="range"] {
+    flex: 2;
+    margin-right: 10px;
+}
+
+.setting-group span {
+    width: 40px;
+    text-align: right;
+}
+
+.close-button {
+    display: block;
+    margin: 20px auto 0;
+    padding: 8px 20px;
+    background: #6c63ff;
+    border: none;
+    border-radius: 5px;
+    color: white;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.close-button:hover {
+    background: #5a52d4;
+}
+
+/* Example greying-out for physics button when physics is off */
+#physics-settings.physics-off {
+    opacity: 0.5;
+    filter: grayscale(80%);
+}
+
+/* 
+   ----------------------
+   NEW TOGGLE BUTTON STYLES
+   ----------------------
+*/
+
+/* Show/hide toggle button to open LLM controls (bottom center) */
+#llm-toggle-btn.llm-toggle-btn {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12; /* Above the canvas */
+    background: linear-gradient(145deg, var(--bg-color-mid), var(--bg-color-start));
+    border: none;
+    color: var(--text-color);
+    border-radius: 30px;
+    width: 45px;
+    height: 45px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    box-shadow: 5px 5px 10px var(--shadow-dark),
+                -5px -5px 10px var(--shadow-light),
+                inset 1px 1px 1px var(--shadow-light),
+                inset -1px -1px 1px var(--shadow-dark);
+    outline: none;
+    transition: transform 0.25s ease;
+}
+#llm-toggle-btn.llm-toggle-btn:hover {
+    transform: translateX(-50%) scale(1.08);
+}
+#llm-toggle-btn.llm-toggle-btn:active {
+    transform: translateX(-50%) scale(0.95);
+}
+
+/* The "down arrow" button floating just above the LLM container to collapse it */
+#llm-hide-btn.llm-hide-btn {
+    position: absolute;
+    top: -30px; /* So it floats just above the container */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(145deg, var(--bg-color-mid), var(--bg-color-start));
+    border: none;
+    border-radius: 20px;
+    box-shadow: 2px 2px 8px var(--shadow-dark),
+                -2px -2px 8px var(--shadow-light);
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    outline: none;
+}
+#llm-hide-btn.llm-hide-btn:hover {
+    transform: translateX(-50%) scale(1.1);
+}
+#llm-hide-btn.llm-hide-btn:active {
+    transform: translateX(-50%) scale(0.95);
+}
