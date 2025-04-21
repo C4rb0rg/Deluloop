@@ -387,7 +387,10 @@ function attachUIListeners() {
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             const { x, y } = getMousePos(e);
-            const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y));
+            // Check if we're in drawing mode
+            const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
+            
+            const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y, isDrawingMode));
             const actualIndex = reversedIndex !== -1 ? pucks.length - 1 - reversedIndex : -1;
             
             if (actualIndex !== -1 && pucks[actualIndex]) {
@@ -415,7 +418,10 @@ function attachUIListeners() {
         canvas.addEventListener('dblclick', (e) => {
             if (!pucks || pucks.length === 0) return;
             const { x, y } = getMousePos(e);
-            const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y));
+            // Check if we're in drawing mode
+            const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
+            
+            const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y, isDrawingMode));
             const actualIndex = reversedIndex !== -1 ? pucks.length - 1 - reversedIndex : -1;
 
             if (actualIndex !== -1 && pucks[actualIndex]) {
@@ -428,6 +434,8 @@ function attachUIListeners() {
         canvas.addEventListener('mousedown', (e) => {
             if (!pucks || pucks.length === 0) return;
             const { x, y } = getMousePos(e);
+            // Check if we're in drawing mode to pass to isHit
+            const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
 
             let deleteHit = false;
             if (hoveredPuckIndex !== null && pucks[hoveredPuckIndex]) {
@@ -444,10 +452,25 @@ function attachUIListeners() {
             }
 
             if (!deleteHit) {
-                const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y));
+                const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y, isDrawingMode));
                 if (reversedIndex !== -1) {
                     draggingPuckIndex = pucks.length - 1 - reversedIndex;
-                    canvas.style.cursor = 'grabbing';
+                    
+                    // If Ctrl key is pressed, start a connection
+                    if (e.ctrlKey) {
+                        pucks[draggingPuckIndex].startConnection(x, y);
+                        canvas.style.cursor = 'crosshair';
+                    } else {
+                        canvas.style.cursor = 'grabbing';
+                        
+                        // If Shift is pressed, mark this as the primary drawing puck
+                        if (e.shiftKey) {
+                            // Clear the flag on all pucks first
+                            pucks.forEach(p => p.isPrimaryDrawingPuck = false);
+                            // Set the flag on the dragged puck
+                            pucks[draggingPuckIndex].isPrimaryDrawingPuck = true;
+                        }
+                    }
                 } else {
                     draggingPuckIndex = null;
                 }
@@ -457,64 +480,200 @@ function attachUIListeners() {
         canvas.addEventListener('mousemove', (e) => {
             if (!pucks) return;
             const { x, y } = getMousePos(e);
-            const currentReversedHoveredIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y));
+            // Check if we're in drawing mode to pass to isHit
+            const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
+            
+            const currentReversedHoveredIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y, isDrawingMode));
             hoveredPuckIndex = currentReversedHoveredIndex !== -1
                 ? pucks.length - 1 - currentReversedHoveredIndex
                 : null;
 
             let newCursor = 'crosshair';
             if (draggingPuckIndex !== null) {
-                newCursor = 'grabbing';
+                // Update cursor based on whether we're connecting or dragging
+                const puck = pucks[draggingPuckIndex];
+                if (puck.isConnecting) {
+                    newCursor = 'crosshair';
+                } else {
+                    newCursor = 'grabbing';
+                }
             } else if (
                 hoveredPuckIndex !== null &&
                 pucks[hoveredPuckIndex]?.isDeleteHit(x, y)
             ) {
                 newCursor = 'pointer';
             } else if (hoveredPuckIndex !== null) {
-                newCursor = 'grab';
+                newCursor = e.ctrlKey ? 'alias' : 'grab'; // 'alias' cursor indicates connection mode
             }
             canvas.style.cursor = newCursor;
 
             if (draggingPuckIndex !== null) {
                 const puck = pucks[draggingPuckIndex];
-                // If Shift is pressed, record the path.
+                
+                // Handle connection mode
+                if (puck.isConnecting) {
+                    puck.updateConnection(x, y);
+                    return;
+                }
+                
+                // Calculate movement delta
+                const deltaX = x - puck.x;
+                const deltaY = y - puck.y;
+                
+                // If Shift is pressed, record the path and move connected pucks together
                 if (e.shiftKey) {
                     // If not already recording or in playback, start a new recording.
                     if (puck.isPlayingPath || !puck.isRecordingPath) {
                         puck.startPathRecording();
+                        
+                        // Ensure this puck is marked as the primary drawing puck
+                        pucks.forEach(p => p.isPrimaryDrawingPuck = false);
+                        puck.isPrimaryDrawingPuck = true;
                     }
                     puck.recordPathPoint();  // Record the current position with timestamp.
                     
                     // Update position based on mouse movement.
-                    puck.vx = (x - puck.x) * 0.5;
-                    puck.vy = (y - puck.y) * 0.5;
+                    puck.vx = deltaX * 0.5;
+                    puck.vy = deltaY * 0.5;
                     puck.x = x;
                     puck.y = y;
                     
-                    // **New:** Immediately update effects while recording.
+                    // Update effects immediately
                     if (typeof puck.updateEffects === 'function') {
                         puck.updateEffects();
                     }
+                    
+                    // DRAWING MODE: MOVE CONNECTED PUCKS TOGETHER
+                    // Move all connected pucks as well (if they're not already in playback mode)
+                    if (puck.connectedPucks && puck.connectedPucks.length > 0) {
+                        const movedPucks = new Set([puck]); // Track which pucks we've moved to avoid loops
+                        
+                        // Function to recursively move connected pucks
+                        const moveConnectedPucks = (currentPuck, dx, dy) => {
+                            for (const connectedPuck of currentPuck.connectedPucks) {
+                                // Skip if already moved this puck or if it's in path playback
+                                if (movedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
+                                
+                                // Move the connected puck by the same delta
+                                connectedPuck.x += dx;
+                                connectedPuck.y += dy;
+                                connectedPuck.vx = deltaX * 0.5;
+                                connectedPuck.vy = deltaY * 0.5;
+                                
+                                // DO NOT record paths for connected pucks - they just follow the primary puck
+                                // Only stop any existing playback
+                                if (connectedPuck.isPlayingPath) {
+                                    connectedPuck.isPlayingPath = false;
+                                }
+                                // Make sure they're not recording paths
+                                connectedPuck.isRecordingPath = false;
+                                connectedPuck.isPrimaryDrawingPuck = false;
+                                
+                                // Mark as moved and update effects
+                                movedPucks.add(connectedPuck);
+                                if (typeof connectedPuck.updateEffects === 'function') {
+                                    connectedPuck.updateEffects();
+                                }
+                                
+                                // Recursively move pucks connected to this one
+                                moveConnectedPucks(connectedPuck, dx, dy);
+                            }
+                        };
+                        
+                        // Start moving connected pucks
+                        moveConnectedPucks(puck, deltaX, deltaY);
+                    }
+                    
                 } else {
+                    // NORMAL DRAGGING MODE: ONLY MOVE THE SELECTED PUCK
+                    // Clear any primary drawing puck flags if we're not in shift mode
+                    if (puck.isPrimaryDrawingPuck) {
+                        puck.isPrimaryDrawingPuck = false;
+                    }
+                    
                     // Normal dragging code—if a puck was recording, end recording to start playback.
                     if (puck.isRecordingPath) {
                         puck.stopPathRecording();
                     }
-                    puck.vx = (x - puck.x) * 0.5;
-                    puck.vy = (y - puck.y) * 0.5;
+                    
+                    // Only update the position of the dragged puck
+                    puck.vx = deltaX * 0.5;
+                    puck.vy = deltaY * 0.5;
                     puck.x = x;
                     puck.y = y;
+                    
+                    // Update effects for just this puck
+                    if (typeof puck.updateEffects === 'function') {
+                        puck.updateEffects();
+                    }
                 }                
             }
         });
 
-        canvas.addEventListener('mouseup', () => {
+        canvas.addEventListener('mouseup', (e) => {
             if (draggingPuckIndex !== null) {
                 const puck = pucks[draggingPuckIndex];
-                if (puck) {
+                
+                // If we're in connection mode, check if we're over another puck to connect to
+                if (puck.isConnecting) {
+                    let targetPuckIndex = null;
+                    // Check if we're in drawing mode
+                    const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
+                    
+                    // Find the puck we're releasing over (if any)
+                    for (let i = 0; i < pucks.length; i++) {
+                        if (i !== draggingPuckIndex) {
+                            const targetPuck = pucks[i];
+                            const { x, y } = getMousePos(e);
+                            if (targetPuck.isHit(x, y, isDrawingMode)) {
+                                targetPuckIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (targetPuckIndex !== null) {
+                        // Complete the connection
+                        puck.endConnection(pucks[targetPuckIndex]);
+                    } else {
+                        // Cancel the connection if we're not over another puck
+                        puck.cancelConnection();
+                    }
+                } else {
+                    // Check if we were in drawing mode (Shift key pressed)
+                    const wasDrawing = puck.isRecordingPath;
+                    
+                    // Normal mouseup behavior for dragging - boost velocities for physics simulation
                     puck.vx *= 2;
                     puck.vy *= 2;
+                    
+                    // If we were in drawing mode, also handle connected pucks
+                    if (wasDrawing && puck.connectedPucks && puck.connectedPucks.length > 0) {
+                        const processedPucks = new Set([puck]); // Track which pucks we've processed to avoid loops
+                        
+                        // Function to recursively apply velocity boost to connected pucks
+                        const applyVelocityToConnected = (currentPuck) => {
+                            for (const connectedPuck of currentPuck.connectedPucks) {
+                                // Skip if already processed or in path playback mode
+                                if (processedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
+                                
+                                // Apply the velocity boost
+                                connectedPuck.vx *= 2;
+                                connectedPuck.vy *= 2;
+                                
+                                // Mark as processed
+                                processedPucks.add(connectedPuck);
+                                
+                                // Recursively process pucks connected to this one
+                                applyVelocityToConnected(connectedPuck);
+                            }
+                        };
+                        
+                        // Start applying velocity to connected pucks
+                        applyVelocityToConnected(puck);
+                    }
                 }
+                
                 draggingPuckIndex = null;
                 canvas.style.cursor = 'crosshair';
             }
@@ -523,10 +682,45 @@ function attachUIListeners() {
         canvas.addEventListener('mouseleave', () => {
             if (draggingPuckIndex !== null) {
                 const puck = pucks[draggingPuckIndex];
-                if (puck) {
+                
+                // Cancel any active connection
+                if (puck.isConnecting) {
+                    puck.cancelConnection();
+                } else {
+                    // Check if we were in drawing mode
+                    const wasDrawing = puck.isRecordingPath;
+                    
+                    // Normal behavior - boost velocities for physics simulation
                     puck.vx *= 2;
                     puck.vy *= 2;
+                    
+                    // If we were in drawing mode, also handle connected pucks
+                    if (wasDrawing && puck.connectedPucks && puck.connectedPucks.length > 0) {
+                        const processedPucks = new Set([puck]); // Track which pucks we've processed to avoid loops
+                        
+                        // Function to recursively apply velocity boost to connected pucks
+                        const applyVelocityToConnected = (currentPuck) => {
+                            for (const connectedPuck of currentPuck.connectedPucks) {
+                                // Skip if already processed or in path playback mode
+                                if (processedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
+                                
+                                // Apply the velocity boost
+                                connectedPuck.vx *= 2;
+                                connectedPuck.vy *= 2;
+                                
+                                // Mark as processed
+                                processedPucks.add(connectedPuck);
+                                
+                                // Recursively process pucks connected to this one
+                                applyVelocityToConnected(connectedPuck);
+                            }
+                        };
+                        
+                        // Start applying velocity to connected pucks
+                        applyVelocityToConnected(puck);
+                    }
                 }
+                
                 draggingPuckIndex = null;
                 canvas.style.cursor = 'crosshair';
             }
@@ -540,16 +734,99 @@ function attachUIListeners() {
                 }
             }
         }, { passive: false });
+
+        // Add handler for ctrl+right-click to stop path playback
+        canvas.addEventListener('contextmenu', function(e) {
+            // Check if the Ctrl key is pressed during right click
+            if (e.ctrlKey) {
+                e.preventDefault();
+                
+                // Get mouse position
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+                
+                // Find pucks near the click location
+                const detectionRadius = 50; // Adjust radius as needed
+                let clickedAnyPuck = false;
+                
+                // Loop through all pucks to find ones within detection radius
+                for (const puck of pucks) {
+                    const distance = Math.sqrt(
+                        Math.pow(mouseX - puck.x, 2) + 
+                        Math.pow(mouseY - puck.y, 2)
+                    );
+                    
+                    if (distance <= detectionRadius) {
+                        // Stop path playback for this puck and all connected pucks
+                        puck.stopPathPlayback(true);
+                        clickedAnyPuck = true;
+                    }
+                }
+                
+                if (clickedAnyPuck) {
+                    console.log('Stopped path playback for pucks near click and their connected pucks');
+                }
+            }
+        });
     }
 
     // Global listener: when the Shift key is released, end any ongoing path recordings.
     document.addEventListener('keyup', (e) => {
         if (e.key === 'Shift') {
-            pucks.forEach(p => {
-                if (p.isRecordingPath) {
-                    p.stopPathRecording();
-                }
+            // First identify all pucks that were recording paths
+            const recordingPucks = pucks.filter(p => p.isRecordingPath);
+            
+            // Process each recording puck and its connections
+            const processedPucks = new Set();
+            
+            // For each recording puck, stop recording and track connected pucks
+            recordingPucks.forEach(puck => {
+                if (processedPucks.has(puck)) return; // Skip if already processed
+                
+                // Create a set of all pucks in this connected group
+                const connectedGroup = new Set([puck]);
+                const findConnectedPucks = (currentPuck) => {
+                    currentPuck.connectedPucks.forEach(connectedPuck => {
+                        if (!connectedGroup.has(connectedPuck)) {
+                            connectedGroup.add(connectedPuck);
+                            findConnectedPucks(connectedPuck);
+                        }
+                    });
+                };
+                
+                // Find all pucks in this connected group
+                findConnectedPucks(puck);
+                
+                // Stop path recording for all pucks in the group and reset primary drawing flag
+                connectedGroup.forEach(groupPuck => {
+                    groupPuck.isPrimaryDrawingPuck = false;
+                    if (groupPuck.isRecordingPath) {
+                        groupPuck.stopPathRecording();
+                    }
+                    processedPucks.add(groupPuck);
+                });
             });
+        }
+        
+        // Update cursor when Ctrl key is released
+        if (e.key === 'Control') {
+            // Reset cursor to default if over a puck
+            if (hoveredPuckIndex !== null && !draggingPuckIndex) {
+                canvas.style.cursor = 'grab';
+            } else if (!draggingPuckIndex) {
+                canvas.style.cursor = 'crosshair';
+            }
+        }
+    });
+
+    // Add visual cue when Ctrl is pressed (connection mode)
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Control') {
+            // Update cursor to show connection mode is active
+            if (hoveredPuckIndex !== null && !draggingPuckIndex) {
+                canvas.style.cursor = 'alias';
+            }
         }
     });
 

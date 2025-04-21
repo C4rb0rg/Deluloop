@@ -352,6 +352,73 @@ function drawWarpedGrid() {
     }
 }
 
+function drawConnections() {
+    if (!networkCtx || !pucks || pucks.length === 0) return;
+    
+    // Set up the line style for connections
+    networkCtx.lineWidth = 2;
+    networkCtx.shadowColor = 'rgba(108, 99, 255, 0.5)';
+    networkCtx.shadowBlur = 3;
+    
+    // Track connections we've already drawn to avoid duplicates
+    const drawnConnections = new Set();
+    
+    // Draw connections for each puck
+    pucks.forEach((puck, puckIndex) => {
+        // Skip if no connections
+        if (!puck.connectedPucks || puck.connectedPucks.length === 0) return;
+        
+        puck.connectedPucks.forEach(connectedPuck => {
+            // Get the connected puck's index
+            const connectedIndex = pucks.indexOf(connectedPuck);
+            if (connectedIndex === -1) return; // Skip if puck not found
+            
+            // Create a unique ID for this connection (always place smaller index first)
+            const connectionId = puckIndex < connectedIndex 
+                ? `${puckIndex}-${connectedIndex}` 
+                : `${connectedIndex}-${puckIndex}`;
+                
+            // Skip if we've already drawn this connection
+            if (drawnConnections.has(connectionId)) return;
+            drawnConnections.add(connectionId);
+            
+            // Determine connection style based on puck types
+            const isRecordedConnection = puck.isRecorded || connectedPuck.isRecorded;
+            
+            if (isRecordedConnection) {
+                // Reddish for connections with recorded pucks
+                networkCtx.strokeStyle = 'rgba(255, 80, 80, 0.6)';
+            } else {
+                // Accent color for regular connections
+                networkCtx.strokeStyle = 'rgba(108, 99, 255, 0.6)';
+            }
+            
+            // Draw the connection line
+            networkCtx.beginPath();
+            networkCtx.moveTo(puck.x, puck.y);
+            networkCtx.lineTo(connectedPuck.x, connectedPuck.y);
+            networkCtx.stroke();
+            
+            // Draw connection endpoints
+            const radius = 3;
+            networkCtx.fillStyle = networkCtx.strokeStyle;
+            
+            // Draw small circles at each end of the connection
+            networkCtx.beginPath();
+            networkCtx.arc(puck.x, puck.y, radius, 0, Math.PI * 2);
+            networkCtx.fill();
+            
+            networkCtx.beginPath();
+            networkCtx.arc(connectedPuck.x, connectedPuck.y, radius, 0, Math.PI * 2);
+            networkCtx.fill();
+        });
+    });
+    
+    // Reset shadow
+    networkCtx.shadowColor = 'transparent';
+    networkCtx.shadowBlur = 0;
+}
+
 function drawActiveConnection() {
     if (!networkCtx) return;
     
@@ -359,10 +426,26 @@ function drawActiveConnection() {
     const connectingPuck = pucks.find(p => p.isConnecting);
     if (!connectingPuck || !connectingPuck.connectionStartPoint || !connectingPuck.connectionEndPoint) return;
 
+    // Set colors based on snapping and triangle formation
+    let lineColor, glowColor;
+    if (connectingPuck.willFormTriangle) {
+        // Special color for triangle formations
+        lineColor = 'rgba(255, 215, 0, 0.8)'; // Golden color for triangle indicators
+        glowColor = 'rgba(255, 215, 0, 0.5)';
+    } else if (connectingPuck.isSnapping) {
+        // Regular snapping color
+        lineColor = 'rgba(108, 99, 255, 0.8)';
+        glowColor = 'rgba(108, 99, 255, 0.5)';
+    } else {
+        // Normal line
+        lineColor = 'rgba(108, 99, 255, 0.4)';
+        glowColor = 'rgba(108, 99, 255, 0.3)';
+    }
+    
     // Draw the connection line with glow effect
-    networkCtx.shadowColor = 'rgba(108, 99, 255, 0.5)'; // Accent color with transparency
+    networkCtx.shadowColor = glowColor;
     networkCtx.shadowBlur = 5;
-    networkCtx.strokeStyle = connectingPuck.isSnapping ? 'rgba(108, 99, 255, 0.8)' : 'rgba(108, 99, 255, 0.4)';
+    networkCtx.strokeStyle = lineColor;
     networkCtx.lineWidth = 2;
     networkCtx.setLineDash([5, 5]); // Dashed line for active connection
     
@@ -375,8 +458,25 @@ function drawActiveConnection() {
     if (connectingPuck.isSnapping) {
         networkCtx.beginPath();
         networkCtx.arc(connectingPuck.connectionEndPoint.x, connectingPuck.connectionEndPoint.y, 5, 0, Math.PI * 2);
-        networkCtx.fillStyle = 'rgba(108, 99, 255, 0.8)';
+        networkCtx.fillStyle = lineColor;
         networkCtx.fill();
+        
+        // Draw triangle indicator
+        if (connectingPuck.willFormTriangle) {
+            networkCtx.beginPath();
+            // Draw a triangle symbol
+            const centerX = connectingPuck.connectionEndPoint.x;
+            const centerY = connectingPuck.connectionEndPoint.y;
+            const size = 12;
+            
+            networkCtx.moveTo(centerX, centerY - size);
+            networkCtx.lineTo(centerX + size * 0.866, centerY + size * 0.5); // 0.866 is approximately sin(60°)
+            networkCtx.lineTo(centerX - size * 0.866, centerY + size * 0.5);
+            networkCtx.closePath();
+            
+            networkCtx.fillStyle = 'rgba(255, 215, 0, 0.6)';
+            networkCtx.fill();
+        }
     }
     
     // Reset line style and shadow

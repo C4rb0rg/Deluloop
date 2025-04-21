@@ -90,6 +90,7 @@ class AudioPuck {
         this.isPlayingPath = false;       // True when the puck is replaying a recorded path
         this.playbackStartTime = 0;       // Timestamp when playback started
         this.recordingDuration = 0;       // Total duration of the recorded path (ms)
+        this.isPrimaryDrawingPuck = false; // Indicates if this is the puck being actively drawn with
   
         // State Flags
         this.isPlaying = false; // Is the puck outputting audio (tied to Transport & mute)
@@ -103,6 +104,7 @@ class AudioPuck {
         this.connectedPucks = []; // Array to store references to connected pucks
         this.isConnecting = false; // Flag to indicate if this puck is being used to create a connection
         this.connectionLine = null; // Stores the current connection line coordinates when dragging
+        this.willFormTriangle = false; // Indicator for potential triangle formations
   
         try {
             // --- Initialize Tone.js Nodes ---
@@ -197,26 +199,98 @@ class AudioPuck {
 
     // During each update, if playing back a recorded path, this method interpolates the position.
     updatePathPlayback() {
-        if (!this.isPlayingPath || this.recordingDuration === 0) return;
-        // Calculate elapsed time (looped)
-        const elapsed = (performance.now() - this.playbackStartTime) % this.recordingDuration;
+        if (!this.isPlayingPath || !this.recordedPath || this.recordedPath.length < 2 || this.recordingDuration <= 0) return;
         
-        // Find recorded points bracketing the elapsed time
-        let startPoint = this.recordedPath[0];
-        let endPoint = this.recordedPath[this.recordedPath.length - 1];
-        for (let i = 0; i < this.recordedPath.length - 1; i++) {
-            if (this.recordedPath[i].time <= elapsed && this.recordedPath[i+1].time >= elapsed) {
-                startPoint = this.recordedPath[i];
-                endPoint = this.recordedPath[i+1];
-                break;
+        try {
+            // Calculate elapsed time (looped)
+            const elapsed = (performance.now() - this.playbackStartTime) % this.recordingDuration;
+            
+            // Find recorded points bracketing the elapsed time
+            let startPoint = this.recordedPath[0];
+            let endPoint = this.recordedPath[this.recordedPath.length - 1];
+            for (let i = 0; i < this.recordedPath.length - 1; i++) {
+                if (this.recordedPath[i].time <= elapsed && this.recordedPath[i+1].time >= elapsed) {
+                    startPoint = this.recordedPath[i];
+                    endPoint = this.recordedPath[i+1];
+                    break;
+                }
             }
+            
+            // Verify that startPoint and endPoint are valid
+            if (!startPoint || !endPoint || 
+                typeof startPoint.x !== 'number' || typeof startPoint.y !== 'number' ||
+                typeof endPoint.x !== 'number' || typeof endPoint.y !== 'number') {
+                console.warn("Invalid path points detected");
+                return;
+            }
+            
+            // Calculate the delta movement from current position
+            const oldX = this.x;
+            const oldY = this.y;
+            
+            // Compute ratio (avoid division by zero)
+            const interval = (endPoint.time - startPoint.time) || 1;
+            const ratio = (elapsed - startPoint.time) / interval;
+            
+            // Linearly interpolate between the two points
+            this.x = startPoint.x + ratio * (endPoint.x - startPoint.x);
+            this.y = startPoint.y + ratio * (endPoint.y - startPoint.y);
+            
+            // Calculate the movement delta
+            const deltaX = this.x - oldX;
+            const deltaY = this.y - oldY;
+            
+            // Move connected pucks along with this puck during playback
+            if (this.connectedPucks && this.connectedPucks.length > 0) {
+                // Skip if delta is very small to avoid unnecessary calculations
+                if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) {
+                    const movedPucks = new Set([this]); // Track which pucks we've moved to avoid loops
+                    
+                    // Function to recursively move connected pucks
+                    const moveConnectedPucks = (currentPuck, dx, dy) => {
+                        if (!currentPuck || !currentPuck.connectedPucks) return;
+                        
+                        for (const connectedPuck of currentPuck.connectedPucks) {
+                            // Skip if already moved this puck, if it's null, or if it's in its own path playback
+                            if (!connectedPuck || movedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
+                            
+                            // Move the connected puck by the same delta
+                            connectedPuck.x += dx;
+                            connectedPuck.y += dy;
+                            
+                            // Mark as moved and update effects
+                            movedPucks.add(connectedPuck);
+                            if (typeof connectedPuck.updateEffects === 'function') {
+                                try {
+                                    connectedPuck.updateEffects();
+                                } catch (error) {
+                                    console.warn("Error updating effects for connected puck:", error);
+                                }
+                            }
+                            
+                            // Recursively move pucks connected to this one
+                            moveConnectedPucks(connectedPuck, dx, dy);
+                        }
+                    };
+                    
+                    // Start moving connected pucks
+                    moveConnectedPucks(this, deltaX, deltaY);
+                }
+            }
+            
+            // Safe update of effects
+            if (typeof this.updateEffects === 'function') {
+                try {
+                    this.updateEffects();
+                } catch (error) {
+                    console.warn("Error updating effects during path playback:", error);
+                }
+            }
+        } catch (error) {
+            console.warn("Error in path playback:", error);
+            // Reset playback state on error to prevent endless errors
+            this.isPlayingPath = false;
         }
-        // Compute ratio (avoid division by zero)
-        const interval = (endPoint.time - startPoint.time) || 1;
-        const ratio = (elapsed - startPoint.time) / interval;
-        // Linearly interpolate between the two points
-        this.x = startPoint.x + ratio * (endPoint.x - startPoint.x);
-        this.y = startPoint.y + ratio * (endPoint.y - startPoint.y);
     }
   
     /**
@@ -395,12 +469,21 @@ class AudioPuck {
             ctx.fillText(volumeText, textX, textY + 14);
             this.drawDeleteButton(ctx);
         }
-        // Draw the path indicator if a recorded path exists.
-        if (this.recordedPath.length > 0) {
+        
+        // Draw the path indicator if a recorded path exists AND
+        // this is either the primary drawing puck or in playback mode
+        if (this.recordedPath.length > 0 && (this.isPrimaryDrawingPuck || this.isPlayingPath)) {
             ctx.save();
-            // You can adjust the stroke style, width, etc. to match your design.
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white line.
-            ctx.lineWidth = 2;
+            
+            // Different style for primary drawing puck vs playback
+            if (this.isPrimaryDrawingPuck) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; // Brighter white for active drawing
+                ctx.lineWidth = 3;
+            } else {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white line for playback
+                ctx.lineWidth = 2;
+            }
+            
             ctx.beginPath();
             // Start at the first recorded point.
             ctx.moveTo(this.recordedPath[0].x, this.recordedPath[0].y);
@@ -462,39 +545,69 @@ class AudioPuck {
     }
   
     /** Checks if the provided mouse coordinates are inside the puck's main body. */
-    isHit(mx, my) {
+    isHit(mx, my, inDrawingMode = false) {
         const dx = mx - this.x;
         const dy = my - this.y;
-        return (dx * dx + dy * dy) <= (this.radius * this.radius);
+        // Use a larger hit radius when in drawing mode for more forgiveness
+        const hitRadius = inDrawingMode ? this.radius * 1.75 : this.radius;
+        return (dx * dx + dy * dy) <= (hitRadius * hitRadius);
     }
   
     /** Updates the wet levels of effects based on the puck's proximity to canvas corners. */
     updateEffects() {
-        if (!this.isLoaded || this.loadError) {
-            if (this.delay) this.delay.wet.value = 0;
-            if (this.reverb) this.reverb.wet.value = 0;
-            if (this.distortion) this.distortion.wet.value = 0;
-            if (this.eq) this.eq.low.value = 0;
+        // Check if audio nodes are available
+        if (!this.isLoaded || this.loadError || !Tone || !Tone.context) {
+            // Safely set values to 0 if nodes exist
+            if (this.delay && this.delay.wet && this.delay.wet.value !== undefined) this.delay.wet.value = 0;
+            if (this.reverb && this.reverb.wet && this.reverb.wet.value !== undefined) this.reverb.wet.value = 0;
+            if (this.distortion && this.distortion.wet && this.distortion.wet.value !== undefined) this.distortion.wet.value = 0;
+            if (this.eq && this.eq.low && this.eq.low.value !== undefined) this.eq.low.value = 0;
             return;
         }
-        const d = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
-        const currentWidth = canvas?.width || window.innerWidth;
-        const currentHeight = canvas?.height || window.innerHeight;
-        const maxDist = Math.hypot(currentWidth, currentHeight);
-        if (maxDist === 0) return;
-  
-        const delayProx = 1 - Math.min(d(this, corners.delay) / maxDist, 1);
-        const reverbProx = 1 - Math.min(d(this, corners.reverb) / maxDist, 1);
-        const distortionProx = 1 - Math.min(d(this, corners.distortion) / maxDist, 1);
-        const eqProx = 1 - Math.min(d(this, corners.eq) / maxDist, 1);
-  
-        const rampTime = Tone.now() + 0.05;
-        if (this.delay) this.delay.wet.linearRampToValueAtTime(delayProx * 0.5, rampTime);
-        if (this.reverb) this.reverb.wet.linearRampToValueAtTime(reverbProx, rampTime);
-        if (this.distortion) this.distortion.wet.linearRampToValueAtTime(distortionProx * 0.5, rampTime);
-        if (this.eq) {
-            const eqDB = (eqProx - 0.5) * 24;
-            this.eq.low.linearRampToValueAtTime(eqDB, rampTime);
+        
+        try {
+            // Make sure corners is defined and has the expected properties
+            if (!corners || !corners.delay || !corners.reverb || !corners.distortion || !corners.eq) {
+                console.warn("Missing corners definition for audio effects");
+                return;
+            }
+            
+            const d = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            const currentWidth = canvas?.width || window.innerWidth;
+            const currentHeight = canvas?.height || window.innerHeight;
+            const maxDist = Math.hypot(currentWidth, currentHeight);
+            if (maxDist === 0) return;
+      
+            const delayProx = 1 - Math.min(d(this, corners.delay) / maxDist, 1);
+            const reverbProx = 1 - Math.min(d(this, corners.reverb) / maxDist, 1);
+            const distortionProx = 1 - Math.min(d(this, corners.distortion) / maxDist, 1);
+            const eqProx = 1 - Math.min(d(this, corners.eq) / maxDist, 1);
+      
+            // Make sure Tone.now() is available
+            const now = Tone && typeof Tone.now === 'function' ? Tone.now() : 0;
+            if (now === 0) return;
+            
+            const rampTime = now + 0.05;
+            
+            // Check each audio node before calling methods
+            if (this.delay && this.delay.wet && typeof this.delay.wet.linearRampToValueAtTime === 'function') {
+                this.delay.wet.linearRampToValueAtTime(delayProx * 0.5, rampTime);
+            }
+            
+            if (this.reverb && this.reverb.wet && typeof this.reverb.wet.linearRampToValueAtTime === 'function') {
+                this.reverb.wet.linearRampToValueAtTime(reverbProx, rampTime);
+            }
+            
+            if (this.distortion && this.distortion.wet && typeof this.distortion.wet.linearRampToValueAtTime === 'function') {
+                this.distortion.wet.linearRampToValueAtTime(distortionProx * 0.5, rampTime);
+            }
+            
+            if (this.eq && this.eq.low && typeof this.eq.low.linearRampToValueAtTime === 'function') {
+                const eqDB = (eqProx - 0.5) * 24;
+                this.eq.low.linearRampToValueAtTime(eqDB, rampTime);
+            }
+        } catch (error) {
+            console.warn("Error updating audio effects:", error);
         }
     }
   
@@ -667,7 +780,7 @@ class AudioPuck {
             
             // Check for nearby pucks to snap to
             let closestPuck = null;
-            let minDistance = 100; // Snap radius in pixels
+            let minDistance = 40; // Snap radius in pixels - reduced to make it easier to target specific pucks
             
             for (const puck of pucks) {
                 if (puck === this) continue;
@@ -682,10 +795,32 @@ class AudioPuck {
                 }
             }
             
+            // Check if this connection would form a triangle
+            this.willFormTriangle = false;
+            if (closestPuck) {
+                // Check if the potential target connects to any puck that this puck is already connected to
+                for (const myConnectedPuck of this.connectedPucks) {
+                    if (closestPuck.connectedPucks.includes(myConnectedPuck)) {
+                        this.willFormTriangle = true;
+                        break;
+                    }
+                }
+                
+                // Also check the other direction - if this puck is connected to any of target's connections
+                if (!this.willFormTriangle) {
+                    for (const theirConnectedPuck of closestPuck.connectedPucks) {
+                        if (this.connectedPucks.includes(theirConnectedPuck)) {
+                            this.willFormTriangle = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
             // If we found a puck to snap to, smoothly transition to its position
             if (closestPuck) {
                 // Smooth transition to the target position
-                const transitionSpeed = 0.2;
+                const transitionSpeed = 0.3; // Slightly faster transition
                 this.connectionEndPoint.x += (closestPuck.x - this.connectionEndPoint.x) * transitionSpeed;
                 this.connectionEndPoint.y += (closestPuck.y - this.connectionEndPoint.y) * transitionSpeed;
                 this.isSnapping = true;
@@ -698,38 +833,63 @@ class AudioPuck {
     }
 
     endConnection(targetPuck) {
-        if (!targetPuck || targetPuck === this) return;
+        if (!targetPuck || targetPuck === this) {
+            this.cancelConnection();
+            return;
+        }
+
+        // Check if we already have a connection with this puck
+        if (this.connectedPucks.includes(targetPuck)) {
+            console.log("Already connected to this puck");
+            this.cancelConnection();
+            return;
+        }
 
         // Create the connection
         this.connectedPucks.push(targetPuck);
         targetPuck.connectedPucks.push(this);
-
-        // Get all unique connected pucks in the network
-        const allConnectedPucks = new Set([...this.connectedPucks, ...targetPuck.connectedPucks]);
         
-        // Check if we have a multiple of 3 pucks
-        if (allConnectedPucks.size % 3 === 0) {
-            // Find the most recently connected pucks (the last 3 in the network)
-            const recentPucks = Array.from(allConnectedPucks).slice(-3);
-            
-            // Ensure all three pucks are connected to each other
-            for (let i = 0; i < recentPucks.length; i++) {
-                for (let j = i + 1; j < recentPucks.length; j++) {
-                    const puck1 = recentPucks[i];
-                    const puck2 = recentPucks[j];
-                    
-                    // Connect if not already connected
-                    if (!puck1.connectedPucks.includes(puck2)) {
-                        puck1.connectedPucks.push(puck2);
-                        puck2.connectedPucks.push(puck1);
-                    }
-                }
-            }
-        }
-
+        console.log(`Connected puck ${pucks.indexOf(this) + 1} to puck ${pucks.indexOf(targetPuck) + 1}`);
+        
+        // Auto-complete triangle connections
+        this.createTriangleConnections(targetPuck);
+        
         this.isConnecting = false;
         this.connectionLine = null;
         this.snapTarget = null;
+    }
+    
+    // Creates triangle connections between pucks
+    createTriangleConnections(targetPuck) {
+        // For each puck connected to this puck
+        for (const connectedPuck of this.connectedPucks) {
+            // Skip the target puck we just connected
+            if (connectedPuck === targetPuck) continue;
+            
+            // Check if the connected puck and target puck are not already connected
+            if (!connectedPuck.connectedPucks.includes(targetPuck)) {
+                // Create a triangle by connecting these two pucks
+                connectedPuck.connectedPucks.push(targetPuck);
+                targetPuck.connectedPucks.push(connectedPuck);
+                
+                console.log(`Auto-completing triangle: Connected puck ${pucks.indexOf(connectedPuck) + 1} to puck ${pucks.indexOf(targetPuck) + 1}`);
+            }
+        }
+        
+        // Also check connections from the other direction
+        for (const connectedPuck of targetPuck.connectedPucks) {
+            // Skip this puck (we already connected it)
+            if (connectedPuck === this) continue;
+            
+            // Check if the puck connected to target is not already connected to this puck
+            if (!connectedPuck.connectedPucks.includes(this)) {
+                // Complete the triangle
+                connectedPuck.connectedPucks.push(this);
+                this.connectedPucks.push(connectedPuck);
+                
+                console.log(`Auto-completing triangle: Connected puck ${pucks.indexOf(connectedPuck) + 1} to puck ${pucks.indexOf(this) + 1}`);
+            }
+        }
     }
 
     cancelConnection() {
@@ -738,6 +898,7 @@ class AudioPuck {
         this.connectionEndPoint = null;
         this.isSnapping = false;
         this.snapTarget = null;
+        this.willFormTriangle = false;
         // Restore path state
         this.isPlayingPath = this.wasPlayingPath;
         this.isRecordingPath = this.wasRecordingPath;
@@ -763,6 +924,45 @@ class AudioPuck {
         const connectedPucksCopy = [...this.connectedPucks];
         for (const puck of connectedPucksCopy) {
             this.disconnectFrom(puck);
+        }
+    }
+
+    /**
+     * Stops path playback for this puck and optionally for all connected pucks.
+     * @param {boolean} includeConnected - Whether to also stop playback for connected pucks.
+     */
+    stopPathPlayback(includeConnected = false) {
+        if (this.isPlayingPath) {
+            this.isPlayingPath = false;
+            console.log(`Stopped path playback for puck ${this.filename}`);
+        }
+        
+        // Also stop playback for all connected pucks if requested
+        if (includeConnected && this.connectedPucks && this.connectedPucks.length > 0) {
+            const processedPucks = new Set([this]); // Track which pucks we've processed to avoid loops
+            
+            // Function to recursively stop path playback for connected pucks
+            const stopConnectedPucksPaths = (currentPuck) => {
+                for (const connectedPuck of currentPuck.connectedPucks) {
+                    // Skip if already processed
+                    if (processedPucks.has(connectedPuck)) continue;
+                    
+                    // Stop path playback for this connected puck
+                    if (connectedPuck.isPlayingPath) {
+                        connectedPuck.isPlayingPath = false;
+                        console.log(`Stopped path playback for connected puck ${connectedPuck.filename}`);
+                    }
+                    
+                    // Mark as processed
+                    processedPucks.add(connectedPuck);
+                    
+                    // Recursively process pucks connected to this one
+                    stopConnectedPucksPaths(connectedPuck);
+                }
+            };
+            
+            // Start stopping connected pucks' path playback
+            stopConnectedPucksPaths(this);
         }
     }
 } // End of AudioPuck Class
