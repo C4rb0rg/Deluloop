@@ -14,6 +14,12 @@ let storedFriction = 0.98;
 let storedBounce = 0.7;
 let storedMass = 1.0;
 
+// Add panning state tracking
+let isPanningMode = false;
+let panningPuck = null;
+let lastMouseX = 0;
+let isPanningDragging = false;
+
 /**
  * Toggle physics on/off for all pucks.
  * When off, friction/bounce/mass = 0. When on, restore previous values.
@@ -171,27 +177,65 @@ function attachUIListeners() {
             const playToggleIcon = playToggleButton.querySelector('i');
             const operationalPucks = pucks.filter(p => p.isLoaded && !p.loadError);
 
-            if (Tone.Transport.state !== 'started') {
+            // Check current state based on our isTransportRunning flag
+            if (!isTransportRunning) {
+                // STARTING PLAYBACK
+                console.log("Starting master playback");
+                
+                // First, unsync all players to ensure clean state
+                operationalPucks.forEach(p => {
+                    if (p.player) {
+                        try {
+                            p.player.unsync();
+                        } catch (e) {
+                            console.warn(`Error unsyncing player for puck ${pucks.indexOf(p)}:`, e);
+                        }
+                    }
+                });
+                
+                // Start transport first
+                try {
+                    Tone.Transport.start(Tone.now() + 0.1);
+                } catch (e) {
+                    console.warn("Error starting Tone.Transport:", e);
+                }
+                
+                // Then start each player that should play
                 let startedCount = 0;
                 operationalPucks.forEach((p, index) => {
-                    if (p.willPlay && p.player) {
-                        p.player.sync().start(0);
-                        p.isPlaying = true;
-                        if (p.volume) p.volume.mute = p.isMuted;
-                        startedCount++;
+                    if (p.willPlay) {
+                        try {
+                            if (p.player) {
+                                // Sync and start the player
+                                p.player.sync().start(0);
+                                p.isPlaying = true;
+                                p.isMuted = false;
+                                if (p.volume) p.volume.mute = false;
+                                startedCount++;
+                            }
+                        } catch (e) {
+                            console.warn(`Error starting player for puck ${index}:`, e);
+                        }
                     } else {
                         p.isPlaying = false;
                     }
                 });
+                
                 if (startedCount > 0) {
-                    Tone.Transport.start(Tone.now() + 0.1);
-                    console.log(`Tone.Transport started with ${startedCount} pucks.`);
+                    console.log(`Transport started with ${startedCount} pucks.`);
                     isTransportRunning = true;
                     if (playToggleIcon) {
                         playToggleIcon.classList.remove('fa-play');
                         playToggleIcon.classList.add('fa-pause');
                     }
                 } else {
+                    // No pucks to play - stop transport and show message
+                    try {
+                        Tone.Transport.stop();
+                    } catch (e) {
+                        console.warn("Error stopping Tone.Transport:", e);
+                    }
+                    
                     let message = "No audio loaded or ready to play.";
                     if (pucks.length > 0) {
                         message = "No tracks armed (double-click a puck to arm), or they're still loading/error.";
@@ -200,14 +244,39 @@ function attachUIListeners() {
                     alert(message);
                 }
             } else {
-                console.log("Stopping Tone.Transport...");
-                Tone.Transport.stop();
-                pucks.forEach(p => p.isPlaying = false);
+                // STOPPING PLAYBACK
+                console.log("Stopping master playback");
+                
+                // Stop the Transport first
+                try {
+                    Tone.Transport.stop();
+                } catch (e) {
+                    console.warn("Error stopping Tone.Transport:", e);
+                }
+                
+                // Then stop all individual players
+                operationalPucks.forEach(p => {
+                    if (p.player) {
+                        try {
+                            // Unsync from transport
+                            p.player.unsync();
+                            // Stop the player
+                            p.player.stop();
+                            p.isPlaying = false;
+                        } catch (e) {
+                            console.warn(`Error stopping player for puck ${pucks.indexOf(p)}:`, e);
+                        }
+                    }
+                });
+                
                 isTransportRunning = false;
+                
                 if (playToggleIcon) {
                     playToggleIcon.classList.remove('fa-pause');
                     playToggleIcon.classList.add('fa-play');
                 }
+                
+                console.log("All audio playback stopped");
             }
         });
     }
@@ -418,6 +487,21 @@ function attachUIListeners() {
         canvas.addEventListener('dblclick', (e) => {
             if (!pucks || pucks.length === 0) return;
             const { x, y } = getMousePos(e);
+            
+            // Check if we're in panning mode and double-clicking on the panning bar
+            if (isPanningMode && panningPuck) {
+                const barWidth = panningPuck.radius * 2.5;
+                const barHeight = 6;
+                const barX = panningPuck.x - barWidth/2;
+                const barY = panningPuck.y + panningPuck.radius + 10;
+                
+                if (x >= barX && x <= barX + barWidth && 
+                    y >= barY && y <= barY + barHeight) {
+                    panningPuck.resetPan();
+                    return;
+                }
+            }
+            
             // Check if we're in drawing mode
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
@@ -434,6 +518,22 @@ function attachUIListeners() {
         canvas.addEventListener('mousedown', (e) => {
             if (!pucks || pucks.length === 0) return;
             const { x, y } = getMousePos(e);
+            
+            // Check if we're in panning mode and clicking on the panning bar
+            if (isPanningMode && panningPuck) {
+                const barWidth = panningPuck.radius * 2.5;
+                const barHeight = 6;
+                const barX = panningPuck.x - barWidth/2;
+                const barY = panningPuck.y + panningPuck.radius + 10;
+                
+                if (x >= barX && x <= barX + barWidth && 
+                    y >= barY && y <= barY + barHeight) {
+                    isPanningDragging = true;
+                    lastMouseX = x;
+                    return;
+                }
+            }
+            
             // Check if we're in drawing mode to pass to isHit
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
 
@@ -480,6 +580,21 @@ function attachUIListeners() {
         canvas.addEventListener('mousemove', (e) => {
             if (!pucks) return;
             const { x, y } = getMousePos(e);
+<<<<<<< Updated upstream
+=======
+            
+            // Handle panning if in panning mode and dragging
+            if (isPanningMode && panningPuck && isPanningDragging) {
+                const barWidth = panningPuck.radius * 2.5;
+                const deltaX = x - lastMouseX;
+                const sensitivity = 180 / (barWidth/2); // Convert pixel movement to angle
+                const newAngle = panningPuck.panAngle + deltaX * sensitivity;
+                panningPuck.setPan(newAngle);
+                lastMouseX = x;
+                return;
+            }
+            
+>>>>>>> Stashed changes
             // Check if we're in drawing mode to pass to isHit
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
@@ -611,6 +726,11 @@ function attachUIListeners() {
         });
 
         canvas.addEventListener('mouseup', (e) => {
+            if (isPanningDragging) {
+                isPanningDragging = false;
+                return;
+            }
+            
             if (draggingPuckIndex !== null) {
                 const puck = pucks[draggingPuckIndex];
                 
@@ -904,3 +1024,20 @@ function attachUIListeners() {
 
     console.log("All UI event listeners attached.");
 }
+
+// Add keyboard event listener for 'P' key
+document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'p' && hoveredPuckIndex !== null) {
+        const puck = pucks[hoveredPuckIndex];
+        if (puck) {
+            isPanningMode = !isPanningMode;
+            puck.togglePanning(isPanningMode);
+            panningPuck = isPanningMode ? puck : null;
+            if (isPanningMode) {
+                canvas.style.cursor = 'ew-resize';
+            } else {
+                canvas.style.cursor = 'crosshair';
+            }
+        }
+    }
+});

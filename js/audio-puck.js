@@ -106,12 +106,18 @@ class AudioPuck {
         this.connectionLine = null; // Stores the current connection line coordinates when dragging
         this.willFormTriangle = false; // Indicator for potential triangle formations
   
+        // Add panning properties
+        this.isPanning = false; // Whether the puck is in panning mode
+        this.panAngle = 0; // Current pan angle in degrees (-180 to 180)
+        this.panNode = null; // Will hold the Tone.Panner node
+  
         try {
             // --- Initialize Tone.js Nodes ---
             this.delay = new Tone.FeedbackDelay({ delayTime: 0.25, feedback: 0.5, wet: 0 });
             this.reverb = new Tone.Reverb({ decay: 2, wet: 0 });
             this.distortion = new Tone.Distortion({ distortion: 0.6, wet: 0 });
             this.eq = new Tone.EQ3({ low: 0, mid: 0, high: 0 });
+            this.panNode = new Tone.Panner(0).toDestination(); // Initialize panner with center position
             // Initialize volume with mute state based on isMuted
             this.volume = new Tone.Volume(this.volumeValue).toDestination();
             this.volume.mute = this.isMuted;
@@ -157,7 +163,7 @@ class AudioPuck {
                     this.isPlaying = false;
                     alert(`Error loading: ${this.filename}. Unsupported format or network issue? Check console.`);
                 }
-            }).chain(this.delay, this.reverb, this.distortion, this.eq, this.volume);
+            }).chain(this.delay, this.reverb, this.distortion, this.eq, this.panNode, this.volume);
   
             this.updateEffects(); // Initialize effect levels based on initial position
   
@@ -302,20 +308,61 @@ class AudioPuck {
             console.log(`Puck ${currentIdx + 1}: Cannot toggle playback - not loaded or error.`);
             return;
         }
-  
-        const transportIsRunning = typeof isTransportRunning !== 'undefined' && isTransportRunning && Tone.Transport.state === 'started';
+
+        const transportIsRunning = typeof isTransportRunning !== 'undefined' && isTransportRunning;
+        
         if (transportIsRunning) {
-            // When running: Toggle mute.
-            this.isMuted = !this.isMuted;
-            if (this.volume) {
-                this.volume.mute = this.isMuted;
+            // When transport is running: Toggle actual playback state
+            if (this.isPlaying) {
+                // Currently playing - stop it
+                console.log(`Puck ${currentIdx + 1} (${this.filename}): Stopping playback`);
+                this.isPlaying = false;
+                this.isMuted = true;
+                
+                if (this.player) {
+                    try {
+                        // Disconnect from the transport to stop sync'd playback
+                        this.player.unsync();
+                        this.player.stop();
+                    } catch (e) {
+                        console.warn(`Error stopping player for puck ${currentIdx + 1}:`, e);
+                    }
+                }
+                
+                if (this.volume) {
+                    this.volume.mute = true;
+                }
+                
+            } else {
+                // Currently stopped - start it
+                console.log(`Puck ${currentIdx + 1} (${this.filename}): Starting playback`);
+                this.isPlaying = true;
+                this.isMuted = false;
+                this.willPlay = true; // Make sure it's armed for future plays too
+                
+                if (this.player) {
+                    try {
+                        // Sync with transport and start
+                        this.player.sync().start(0);
+                    } catch (e) {
+                        console.warn(`Error starting player for puck ${currentIdx + 1}:`, e);
+                    }
+                }
+                
+                if (this.volume) {
+                    this.volume.mute = false;
+                }
             }
-            this.isPlaying = !this.isMuted;
-            console.log(`Puck ${currentIdx + 1} (${this.filename}): Mute toggled to ${this.isMuted}. IsPlaying set to ${this.isPlaying}`);
         } else {
-            // When stopped: Toggle armed state.
+            // When transport stopped: Toggle armed state
             this.willPlay = !this.willPlay;
             console.log(`Puck ${currentIdx + 1} (${this.filename}): WillPlay toggled to ${this.willPlay}`);
+            
+            // Set initial state for when transport starts
+            if (this.willPlay) {
+                this.isMuted = false;
+            }
+            
             this.isPlaying = false;
         }
     }
@@ -423,6 +470,44 @@ class AudioPuck {
         ctx.fillStyle = currentFill;
         ctx.fill();
   
+        // Draw panning bar if in panning mode
+        if (this.isPanning) {
+            ctx.save();
+            
+            // Draw the panning bar background
+            const barWidth = this.radius * 2.5;
+            const barHeight = 6;
+            const barX = this.x - barWidth/2;
+            const barY = this.y + this.radius + 10;
+            
+            // Draw bar background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            // Draw center line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(this.x, barY);
+            ctx.lineTo(this.x, barY + barHeight);
+            ctx.stroke();
+            
+            // Draw pan indicator
+            const panX = this.x + (this.panAngle / 180) * (barWidth/2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.beginPath();
+            ctx.arc(panX, barY + barHeight/2, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw pan value
+            ctx.fillStyle = 'white';
+            ctx.font = '12px Poppins';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${this.panAngle.toFixed(0)}°`, this.x, barY + barHeight + 15);
+            
+            ctx.restore();
+        }
+  
         // Reset shadow and opacity for text.
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
@@ -467,6 +552,7 @@ class AudioPuck {
             ctx.fillText(`${displayName} (${stateText})`, textX, textY);
             const volumeText = `Vol: ${this.volumeValue.toFixed(1)} dB`;
             ctx.fillText(volumeText, textX, textY + 14);
+            
             this.drawDeleteButton(ctx);
         }
         
@@ -645,6 +731,7 @@ class AudioPuck {
             if (this.reverb) this.reverb.dispose();
             if (this.distortion) this.distortion.dispose();
             if (this.eq) this.eq.dispose();
+            if (this.panNode) this.panNode.dispose();
             if (this.volume) this.volume.dispose();
         } catch (e) {
             console.error(`Error during Tone node disposal for Puck index ${currentIndex}:`, e);
@@ -654,6 +741,7 @@ class AudioPuck {
             this.reverb = null;
             this.distortion = null;
             this.eq = null;
+            this.panNode = null;
             this.volume = null;
             this.isLoaded = false;
             this.isPlaying = false;
@@ -845,13 +933,13 @@ class AudioPuck {
             return;
         }
 
-        // Create the connection
+        // Create the initial connection
         this.connectedPucks.push(targetPuck);
         targetPuck.connectedPucks.push(this);
         
         console.log(`Connected puck ${pucks.indexOf(this) + 1} to puck ${pucks.indexOf(targetPuck) + 1}`);
         
-        // Auto-complete triangle connections
+        // Handle triangle formations
         this.createTriangleConnections(targetPuck);
         
         this.isConnecting = false;
@@ -861,33 +949,52 @@ class AudioPuck {
     
     // Creates triangle connections between pucks
     createTriangleConnections(targetPuck) {
-        // For each puck connected to this puck
-        for (const connectedPuck of this.connectedPucks) {
-            // Skip the target puck we just connected
-            if (connectedPuck === targetPuck) continue;
+        // Find all pucks that are connected to both this puck and the target puck
+        const commonConnections = this.connectedPucks.filter(puck => 
+            targetPuck.connectedPucks.includes(puck) && 
+            puck !== targetPuck
+        );
+
+        // If we have exactly one common connection, we're adding to an existing triangle
+        if (commonConnections.length === 1) {
+            const existingPuck = commonConnections[0];
             
-            // Check if the connected puck and target puck are not already connected
-            if (!connectedPuck.connectedPucks.includes(targetPuck)) {
-                // Create a triangle by connecting these two pucks
-                connectedPuck.connectedPucks.push(targetPuck);
-                targetPuck.connectedPucks.push(connectedPuck);
-                
-                console.log(`Auto-completing triangle: Connected puck ${pucks.indexOf(connectedPuck) + 1} to puck ${pucks.indexOf(targetPuck) + 1}`);
+            // Check if this would form a complete triangle
+            if (!this.connectedPucks.includes(existingPuck)) {
+                // Connect to form the new triangle
+                this.connectedPucks.push(existingPuck);
+                existingPuck.connectedPucks.push(this);
+                console.log(`Formed new triangle with puck ${pucks.indexOf(existingPuck) + 1}`);
             }
-        }
-        
-        // Also check connections from the other direction
-        for (const connectedPuck of targetPuck.connectedPucks) {
-            // Skip this puck (we already connected it)
-            if (connectedPuck === this) continue;
+        } else if (commonConnections.length === 0) {
+            // If no common connections, check if we're connecting to a line
+            const targetConnections = targetPuck.connectedPucks.filter(puck => puck !== this);
+            const thisConnections = this.connectedPucks.filter(puck => puck !== targetPuck);
             
-            // Check if the puck connected to target is not already connected to this puck
-            if (!connectedPuck.connectedPucks.includes(this)) {
-                // Complete the triangle
-                connectedPuck.connectedPucks.push(this);
-                this.connectedPucks.push(connectedPuck);
+            // If either puck has exactly one other connection, we're forming a triangle
+            if (targetConnections.length === 1 || thisConnections.length === 1) {
+                // Find the puck to complete the triangle
+                const trianglePuck = targetConnections.length === 1 ? targetConnections[0] : thisConnections[0];
                 
-                console.log(`Auto-completing triangle: Connected puck ${pucks.indexOf(connectedPuck) + 1} to puck ${pucks.indexOf(this) + 1}`);
+                if (trianglePuck && !this.connectedPucks.includes(trianglePuck)) {
+                    // Connect to form the triangle
+                    this.connectedPucks.push(trianglePuck);
+                    trianglePuck.connectedPucks.push(this);
+                    console.log(`Formed new triangle with puck ${pucks.indexOf(trianglePuck) + 1}`);
+                }
+            } else {
+                // If we're not forming a triangle, look for a potential triangle formation
+                const potentialTrianglePuck = targetPuck.connectedPucks.find(puck => 
+                    !this.connectedPucks.includes(puck) && 
+                    puck !== this
+                );
+                
+                if (potentialTrianglePuck) {
+                    // Connect to form a new triangle
+                    this.connectedPucks.push(potentialTrianglePuck);
+                    potentialTrianglePuck.connectedPucks.push(this);
+                    console.log(`Formed new triangle with puck ${pucks.indexOf(potentialTrianglePuck) + 1}`);
+                }
             }
         }
     }
@@ -964,5 +1071,38 @@ class AudioPuck {
             // Start stopping connected pucks' path playback
             stopConnectedPucksPaths(this);
         }
+    }
+
+    /**
+     * Toggles panning mode for the puck.
+     * @param {boolean} enable - Whether to enable or disable panning mode.
+     */
+    togglePanning(enable) {
+        this.isPanning = enable;
+        // Don't reset pan when disabling - keep the last pan value
+    }
+
+    /**
+     * Sets the pan position based on the angle.
+     * @param {number} angle - The pan angle in degrees (-180 to 180).
+     */
+    setPan(angle) {
+        // Clamp angle between -180 and 180 degrees
+        this.panAngle = Math.max(-180, Math.min(180, angle));
+        
+        // Convert angle to pan value (-1 to 1)
+        const panValue = this.panAngle / 180;
+        
+        // Update the pan node
+        if (this.panNode && this.panNode.pan) {
+            this.panNode.pan.value = panValue;
+        }
+    }
+
+    /**
+     * Resets the pan to center (0 degrees).
+     */
+    resetPan() {
+        this.setPan(0);
     }
 } // End of AudioPuck Class
