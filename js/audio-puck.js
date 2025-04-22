@@ -427,6 +427,44 @@ class AudioPuck {
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
+        
+        // Draw autosampling indicator if active
+        if (this.isAutosampling) {
+            // Draw a pulsing ring around the puck when autosampling
+            const now = performance.now();
+            const pulseSize = 1 + 0.2 * Math.sin(now / 200); // Subtle pulse effect
+            
+            // Draw ring with accent color and animation
+            ctx.globalAlpha = 0.7 + 0.3 * Math.sin(now / 300);
+            ctx.strokeStyle = '#ff5d8f'; // Hot pink for autosampling
+            ctx.lineWidth = 3 * pulseSize;
+            ctx.setLineDash([5, 3]);
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius + 6, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Add some smaller circles around the puck for a "sampling" effect
+            const numCircles = 3;
+            ctx.fillStyle = '#ff5d8f';
+            ctx.setLineDash([]);
+            
+            for (let i = 0; i < numCircles; i++) {
+                const angle = (now / 500) + (i * (Math.PI * 2 / numCircles));
+                const dist = this.radius + 12;
+                const size = 2 + Math.sin(now / 200 + i) * 1.5;
+                
+                const cx = this.x + Math.cos(angle) * dist;
+                const cy = this.y + Math.sin(angle) * dist;
+                
+                ctx.beginPath();
+                ctx.arc(cx, cy, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Reset opacity and line style
+            ctx.globalAlpha = 1.0;
+            ctx.setLineDash([]);
+        }
   
         // Determine text color based on state.
         let textColor = (this.willPlay || transportIsRunning) ? 'white' : 'black';
@@ -460,6 +498,11 @@ class AudioPuck {
             } else {
                 stateText = this.willPlay ? 'Ready' : 'Paused';
             }
+            
+            // Add autosampling status to hover text
+            if (this.isAutosampling) {
+                stateText += ' [Autosampling]';
+            }
   
             const displayName = this.filename.length > 25 ? this.filename.substring(0, 22) + '...' : this.filename;
             const textX = this.x + this.radius + 8;
@@ -475,23 +518,57 @@ class AudioPuck {
         if (this.recordedPath.length > 0 && (this.isPrimaryDrawingPuck || this.isPlayingPath)) {
             ctx.save();
             
+            // Get the accent color from CSS or use default purple
+            const accentColor = getComputedStyle(document.documentElement)
+                .getPropertyValue('--accent-color').trim() || '#6c63ff';
+            
             // Different style for primary drawing puck vs playback
             if (this.isPrimaryDrawingPuck) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; // Brighter white for active drawing
+                // Active drawing path style
+                ctx.strokeStyle = accentColor;
                 ctx.lineWidth = 3;
+                ctx.shadowColor = `rgba(108, 99, 255, 0.6)`;
+                ctx.shadowBlur = 8;
+                // Use dotted line for active drawing for better visibility
+                ctx.setLineDash([5, 3]);
             } else {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white line for playback
-                ctx.lineWidth = 2;
+                // Playback path style
+                ctx.strokeStyle = `rgba(108, 99, 255, 0.7)`;
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = `rgba(108, 99, 255, 0.4)`;
+                ctx.shadowBlur = 5;
+                // Dashed line for playback
+                ctx.setLineDash([8, 4]);
             }
             
+            // Set line cap to round for smoother dashed lines
+            ctx.lineCap = 'round';
+            
             ctx.beginPath();
-            // Start at the first recorded point.
+            // Start at the first recorded point
             ctx.moveTo(this.recordedPath[0].x, this.recordedPath[0].y);
-            // Draw a line through all recorded points.
+            // Draw a line through all recorded points
             for (let i = 1; i < this.recordedPath.length; i++) {
                 ctx.lineTo(this.recordedPath[i].x, this.recordedPath[i].y);
             }
             ctx.stroke();
+            
+            // Draw small circles at the start and end points for added visual appeal
+            ctx.setLineDash([]); // Reset line dash
+            ctx.shadowBlur = 3;
+            ctx.fillStyle = accentColor;
+            
+            // Start point circle
+            ctx.beginPath();
+            ctx.arc(this.recordedPath[0].x, this.recordedPath[0].y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // End point circle
+            const lastPoint = this.recordedPath[this.recordedPath.length - 1];
+            ctx.beginPath();
+            ctx.arc(lastPoint.x, lastPoint.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
             ctx.restore();
         }
 

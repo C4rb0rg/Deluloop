@@ -480,6 +480,10 @@ function attachUIListeners() {
         canvas.addEventListener('mousemove', (e) => {
             if (!pucks) return;
             const { x, y } = getMousePos(e);
+            
+            // Store the last mouse position for autosampler connection line detection
+            canvas._lastMousePosition = { x, y };
+            
             // Check if we're in drawing mode to pass to isHit
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
@@ -828,7 +832,172 @@ function attachUIListeners() {
                 canvas.style.cursor = 'alias';
             }
         }
+        
+        // AutoSampler activation with 'r' key
+        if (e.key.toLowerCase() === 'r') {
+            // Only activate if we're hovering over a puck or connection
+            if (hoveredPuckIndex !== null && hoveredPuckIndex >= 0 && hoveredPuckIndex < pucks.length) {
+                const hoveredPuck = pucks[hoveredPuckIndex];
+                
+                // If the puck has connections, include all connected pucks
+                if (hoveredPuck.connectedPucks && hoveredPuck.connectedPucks.length > 0) {
+                    // Create a set to collect all connected pucks (avoid duplicates)
+                    const connectedGroup = new Set([hoveredPuck]);
+                    
+                    // Recursive function to find all connected pucks
+                    const findAllConnectedPucks = (currentPuck) => {
+                        if (!currentPuck.connectedPucks) return;
+                        
+                        currentPuck.connectedPucks.forEach(connectedPuck => {
+                            if (!connectedGroup.has(connectedPuck)) {
+                                connectedGroup.add(connectedPuck);
+                                findAllConnectedPucks(connectedPuck);
+                            }
+                        });
+                    };
+                    
+                    // Find all pucks in this connected network
+                    findAllConnectedPucks(hoveredPuck);
+                    
+                    // Convert to array and toggle autosampling
+                    const pucksForSampling = Array.from(connectedGroup);
+                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
+                        const isActive = autoSampler.toggle(pucksForSampling);
+                        
+                        // Visual feedback
+                        if (isActive) {
+                            pucksForSampling.forEach(puck => {
+                                // Add visual indicator for autosampled pucks
+                                puck.isAutosampling = true;
+                            });
+                            console.log(`AutoSampler started on ${pucksForSampling.length} pucks`);
+                        } else {
+                            pucksForSampling.forEach(puck => {
+                                puck.isAutosampling = false;
+                            });
+                            console.log("AutoSampler stopped");
+                        }
+                    }
+                } else {
+                    // Single puck with no connections - just toggle on this one
+                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
+                        const isActive = autoSampler.toggle([hoveredPuck]);
+                        hoveredPuck.isAutosampling = isActive;
+                        console.log(`AutoSampler ${isActive ? 'started' : 'stopped'} on single puck`);
+                    }
+                }
+            } else {
+                // If not hovering over a puck, check if we're near a connection
+                // This is a bit more complex as we need to detect if the mouse is near a line
+                const mousePos = canvas._lastMousePosition || { x: 0, y: 0 };
+                let nearConnection = false;
+                let connectedGroup = new Set();
+                
+                // Check all pucks for connections
+                for (let i = 0; i < pucks.length && !nearConnection; i++) {
+                    const puck = pucks[i];
+                    if (!puck.connectedPucks || puck.connectedPucks.length === 0) continue;
+                    
+                    // Check each connection
+                    for (const connectedPuck of puck.connectedPucks) {
+                        // Calculate distance from mouse to connection line
+                        const dist = distanceToLine(
+                            mousePos.x, mousePos.y,
+                            puck.x, puck.y,
+                            connectedPuck.x, connectedPuck.y
+                        );
+                        
+                        // If mouse is near a connection line
+                        if (dist <= 20) { // 20px threshold
+                            nearConnection = true;
+                            
+                            // Find all connected pucks in this group
+                            connectedGroup = new Set([puck, connectedPuck]);
+                            const findAllConnected = (currentPuck) => {
+                                if (!currentPuck.connectedPucks) return;
+                                
+                                currentPuck.connectedPucks.forEach(cp => {
+                                    if (!connectedGroup.has(cp)) {
+                                        connectedGroup.add(cp);
+                                        findAllConnected(cp);
+                                    }
+                                });
+                            };
+                            
+                            findAllConnected(puck);
+                            findAllConnected(connectedPuck);
+                            break;
+                        }
+                    }
+                }
+                
+                // If near a connection, toggle autosampling on that group
+                if (nearConnection && connectedGroup.size > 0) {
+                    const pucksForSampling = Array.from(connectedGroup);
+                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
+                        const isActive = autoSampler.toggle(pucksForSampling);
+                        
+                        // Visual feedback
+                        if (isActive) {
+                            pucksForSampling.forEach(puck => {
+                                puck.isAutosampling = true;
+                            });
+                            console.log(`AutoSampler started on ${pucksForSampling.length} connected pucks`);
+                        } else {
+                            pucksForSampling.forEach(puck => {
+                                puck.isAutosampling = false;
+                            });
+                            console.log("AutoSampler stopped");
+                        }
+                    }
+                }
+            }
+        }
     });
+
+    // Track mouse position for connection line detection
+    canvas.addEventListener('mousemove', (e) => {
+        // Store the last mouse position for line detection
+        const rect = canvas.getBoundingClientRect();
+        canvas._lastMousePosition = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        
+        // ... existing mousemove code ...
+    });
+
+    // Helper function to calculate distance from a point to a line segment
+    function distanceToLine(x, y, x1, y1, x2, y2) {
+        const A = x - x1;
+        const B = y - y1;
+        const C = x2 - x1;
+        const D = y2 - y1;
+
+        const dot = A * C + B * D;
+        const lenSq = C * C + D * D;
+        let param = -1;
+        
+        if (lenSq !== 0) param = dot / lenSq;
+
+        let xx, yy;
+
+        if (param < 0) {
+            xx = x1;
+            yy = y1;
+        } else if (param > 1) {
+            xx = x2;
+            yy = y2;
+        } else {
+            xx = x1 + param * C;
+            yy = y1 + param * D;
+        }
+
+        const dx = x - xx;
+        const dy = y - yy;
+        
+        return Math.sqrt(dx * dx + dy * dy);
+    }
 
     // === PHYSICS SETTINGS BUTTON SHORT vs. LONG PRESS ===
     let pressTimer = null;
