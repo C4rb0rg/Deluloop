@@ -13,11 +13,12 @@ class AutoSampler {
         this.currentSequence = []; // Current playback sequence
         this.players = []; // Array of Tone.Players for sample playback
         this.currentIndex = 0; // Current position in the sequence
+        this.nextPlaybackTime = null; // Next scheduled playback time
+        this.scheduledEvents = []; // Scheduled event IDs to cancel when stopping
         
         // Sample settings
         this.minSampleLength = 0.5; // Min sample length in seconds
         this.maxSampleLength = 2.0; // Max sample length in seconds
-        this.sequencerInterval = null; // Tone.Transport interval ID
         
         // Volume and FX settings
         this.outputGain = new Tone.Gain(0.9).toDestination();
@@ -41,7 +42,7 @@ class AutoSampler {
      * Starts autosampling for a group of connected pucks
      * @param {Array} puckGroup - Array of connected AudioPuck objects
      */
-    start(puckGroup) {
+    async start(puckGroup) {
         if (this.isActive) {
             this.stop(); // Stop any existing autosampling
         }
@@ -53,11 +54,29 @@ class AutoSampler {
         
         console.log(`Starting autosampling for ${puckGroup.length} connected pucks`);
         
+        // Ensure audio context is running
+        if (Tone.context.state !== "running") {
+            try {
+                console.log("Starting audio context for autosampling");
+                await Tone.start();
+                console.log("Audio context started successfully");
+            } catch (err) {
+                console.error("Could not start audio context for autosampling:", err);
+                return;
+            }
+        }
+        
+        // Make sure Tone.Transport is running
+        if (Tone.Transport.state !== "started") {
+            console.log("Starting Tone.Transport for autosampling");
+            Tone.Transport.start();
+        }
+        
         // Find all connected groups
         this.targetPuckGroups = this.findConnectedPuckGroups(puckGroup);
         
         // Create and prepare the sequence
-        this.prepareSequence();
+        await this.prepareSequence();
         
         // Start the sequencer
         this.startSequencer();
@@ -77,17 +96,20 @@ class AutoSampler {
     /**
      * Prepares the chopped sample sequence from all target puck groups
      */
-    prepareSequence() {
+    async prepareSequence() {
         // Clear existing players and sequence
         this.disposePlayers();
         this.currentSequence = [];
         this.players = [];
+        
+        const sequencePromises = [];
         
         // Iterate through all puck groups and create samples
         this.targetPuckGroups.forEach(puckGroup => {
             puckGroup.forEach(puck => {
                 // Skip pucks that aren't loaded or have errors
                 if (!puck.isLoaded || puck.loadError || !puck.player || !puck.player.buffer) {
+                    console.log(`Skipping puck ${puck.filename} - not loaded or has errors`);
                     return;
                 }
                 
@@ -96,19 +118,27 @@ class AutoSampler {
                 const duration = buffer.duration;
                 const numSamples = Math.min(Math.floor(Math.random() * 3) + 2, Math.floor(duration / 0.5));
                 
+                console.log(`Creating ${numSamples} samples from ${puck.filename} (duration: ${duration}s)`);
+                
                 for (let i = 0; i < numSamples; i++) {
                     // Create a sample of random length and position
                     const sampleLength = this.minSampleLength + Math.random() * (this.maxSampleLength - this.minSampleLength);
                     const maxStart = Math.max(0, duration - sampleLength);
                     const startTime = Math.random() * maxStart;
                     
-                    // Create a new player for this sample
+                    // Create a new buffer source for this sample
                     const player = new Tone.Player({
                         url: puck.url,
                         loop: false,
                         fadeIn: 0.01,
                         fadeOut: 0.05,
                         volume: 0,
+                        onload: () => {
+                            console.log(`Sample ${i+1} from ${puck.filename} loaded successfully`);
+                        },
+                        onerror: (err) => {
+                            console.error(`Error loading sample ${i+1} from ${puck.filename}:`, err);
+                        }
                     }).connect(this.compressor);
                     
                     // Configure player and add to sequence
@@ -127,6 +157,13 @@ class AutoSampler {
                         startTime,
                         duration: sampleLength
                     });
+                    
+                    // Add a promise that resolves when this player loads
+                    sequencePromises.push(new Promise(resolve => {
+                        player.onstop = resolve;
+                        // Safety timeout in case onstop doesn't fire
+                        setTimeout(resolve, 5000);
+                    }));
                 }
             });
         });
@@ -135,6 +172,11 @@ class AutoSampler {
         this.shuffleSequence();
         
         console.log(`Created sequence with ${this.currentSequence.length} samples`);
+        
+        // Return a promise that resolves when all players are ready
+        return Promise.allSettled(sequencePromises).then(() => {
+            console.log("All sample players initialized");
+        });
     }
     
     /**
@@ -160,62 +202,68 @@ class AutoSampler {
         
         // Reset index
         this.currentIndex = 0;
+        this.nextPlaybackTime = Tone.now();
         
-        // Create a callback function to play the next sample
-        const playNextSample = () => {
-            if (!this.isActive || this.currentSequence.length === 0) {
-                this.stop();
-                return;
-            }
-            
-            const currentSample = this.currentSequence[this.currentIndex];
-            const player = currentSample.player;
-            
-            // Make sure the player has loaded
-            if (player.loaded) {
-                try {
-                    // Set the start offset and duration
-                    const startTime = player.startOffset;
-                    const endTime = player.endOffset;
-                    
-                    // Play the sample with correct timing offsets
-                    player.start("+0.01", startTime, endTime - startTime);
-                    
-                    // Schedule the next sample
-                    const nextTime = currentSample.duration + 0.05; // Small gap between samples
-                    Tone.Transport.scheduleOnce(() => {
-                        // Increment index with wrap-around
-                        this.currentIndex = (this.currentIndex + 1) % this.currentSequence.length;
-                        
-                        // Schedule next sample
-                        playNextSample();
-                    }, `+${nextTime}`);
-                    
-                } catch (error) {
-                    console.warn("Error playing sample:", error);
-                    // Skip to next sample on error
+        // Initial play
+        this.playNextSample();
+    }
+    
+    /**
+     * Plays the next sample in the sequence
+     */
+    playNextSample() {
+        if (!this.isActive || this.currentSequence.length === 0) {
+            this.stop();
+            return;
+        }
+        
+        const currentSample = this.currentSequence[this.currentIndex];
+        const player = currentSample.player;
+        
+        // Make sure the player is ready
+        if (player && player.loaded) {
+            try {
+                console.log(`Playing sample ${this.currentIndex + 1}/${this.currentSequence.length} from ${currentSample.puck.filename} at ${currentSample.startTime.toFixed(2)}s, duration ${currentSample.duration.toFixed(2)}s`);
+                
+                // Set the start offset and duration
+                const startTime = currentSample.startTime;
+                const duration = currentSample.duration;
+                
+                // Actually play the sample
+                player.start(this.nextPlaybackTime, startTime, duration);
+                
+                // Calculate the time for the next sample
+                this.nextPlaybackTime += duration + 0.05; // small gap between samples
+                
+                // Schedule the next sample
+                const eventId = Tone.Transport.schedule(() => {
+                    // Move to the next sample
                     this.currentIndex = (this.currentIndex + 1) % this.currentSequence.length;
-                    Tone.Transport.scheduleOnce(playNextSample, "+0.1");
-                }
-            } else {
-                // If player not loaded, wait for it or skip after timeout
-                let loadAttempts = 0;
-                const waitForLoad = setInterval(() => {
-                    if (player.loaded) {
-                        clearInterval(waitForLoad);
-                        playNextSample();
-                    } else if (loadAttempts > 10) {
-                        clearInterval(waitForLoad);
-                        this.currentIndex = (this.currentIndex + 1) % this.currentSequence.length;
-                        playNextSample();
-                    }
-                    loadAttempts++;
-                }, 100);
+                    this.playNextSample();
+                }, Tone.now() + duration + 0.05); // Schedule relative to now
+                
+                // Store the event ID for cleanup
+                this.scheduledEvents.push(eventId);
+                
+            } catch (error) {
+                console.warn("Error playing sample:", error);
+                // Skip to next sample on error
+                this.currentIndex = (this.currentIndex + 1) % this.currentSequence.length;
+                this.playNextSample();
             }
-        };
-        
-        // Start the sequencer immediately
-        playNextSample();
+        } else {
+            console.log("Player not loaded yet, waiting...");
+            // If player not loaded, wait for it or skip after timeout
+            setTimeout(() => {
+                if (player && player.loaded) {
+                    this.playNextSample();
+                } else {
+                    console.warn(`Skipping unloaded sample ${this.currentIndex + 1}`);
+                    this.currentIndex = (this.currentIndex + 1) % this.currentSequence.length;
+                    this.playNextSample();
+                }
+            }, 500);
+        }
     }
     
     /**
@@ -223,6 +271,12 @@ class AutoSampler {
      */
     stop() {
         console.log("Stopping autosampler");
+        
+        // Cancel all scheduled events
+        this.scheduledEvents.forEach(id => {
+            Tone.Transport.clear(id);
+        });
+        this.scheduledEvents = [];
         
         // Stop all players
         this.players.forEach(player => {
@@ -238,6 +292,7 @@ class AutoSampler {
         // Clean up
         this.isActive = false;
         this.targetPuckGroups = [];
+        this.nextPlaybackTime = null;
         
         // Dispose players to free up resources
         this.disposePlayers();
@@ -251,6 +306,7 @@ class AutoSampler {
             this.players.forEach(player => {
                 try {
                     player.stop();
+                    player.disconnect();
                     player.dispose();
                 } catch (error) {
                     console.warn("Error disposing player:", error);
