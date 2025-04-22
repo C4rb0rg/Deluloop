@@ -303,67 +303,56 @@ class AudioPuck {
      * Toggles the playback state (mute or willPlay) based on Tone.Transport's state.
      */
     togglePlayback() {
-        const currentIdx = typeof pucks !== 'undefined' ? pucks.indexOf(this) : -1;
-        if (!this.isLoaded || this.loadError) {
-            console.log(`Puck ${currentIdx + 1}: Cannot toggle playback - not loaded or error.`);
-            return;
-        }
-
-        const transportIsRunning = typeof isTransportRunning !== 'undefined' && isTransportRunning;
-        
-        if (transportIsRunning) {
-            // When transport is running: Toggle actual playback state
-            if (this.isPlaying) {
-                // Currently playing - stop it
-                console.log(`Puck ${currentIdx + 1} (${this.filename}): Stopping playback`);
-                this.isPlaying = false;
-                this.isMuted = true;
+        try {
+            // Ensure audio context is running
+            if (Tone.context.state !== 'running') {
+                Tone.start();
+            }
+            
+            console.log(`Toggle playback for puck ${pucks.indexOf(this) + 1}, currently playing: ${this.isPlaying}`);
+            
+            // Handle toggling based on the current state
+            if (!isTransportRunning) {
+                // Transport not running - toggle willPlay flag
+                this.willPlay = !this.willPlay;
+                console.log(`Set willPlay to ${this.willPlay} (transport not running)`);
                 
-                if (this.player) {
-                    try {
-                        // Disconnect from the transport to stop sync'd playback
-                        this.player.unsync();
-                        this.player.stop();
-                    } catch (e) {
-                        console.warn(`Error stopping player for puck ${currentIdx + 1}:`, e);
-                    }
-                }
-                
-                if (this.volume) {
-                    this.volume.mute = true;
-                }
-                
+                // Visual feedback only - transport isn't running
+                this.isPlaying = this.willPlay;
             } else {
-                // Currently stopped - start it
-                console.log(`Puck ${currentIdx + 1} (${this.filename}): Starting playback`);
-                this.isPlaying = true;
-                this.isMuted = false;
-                this.willPlay = true; // Make sure it's armed for future plays too
-                
-                if (this.player) {
-                    try {
-                        // Sync with transport and start
-                        this.player.sync().start(0);
-                    } catch (e) {
-                        console.warn(`Error starting player for puck ${currentIdx + 1}:`, e);
+                // Transport is running - immediate toggle
+                if (this.isPlaying) {
+                    // Currently playing - stop this puck immediately
+                    console.log(`Stopping playback for puck ${pucks.indexOf(this) + 1}`);
+                    
+                    if (this.player) {
+                        // Stop and set volume to 0 for immediate effect
+                        this.player.stop();
+                        if (this.volume) this.volume.mute = true;
+                        
+                        // Update flags
+                        this.isPlaying = false;
+                        this.isMuted = true;
+                        this.willPlay = false;
+                    }
+                } else {
+                    // Currently stopped - start this puck immediately
+                    console.log(`Starting playback for puck ${pucks.indexOf(this) + 1}`);
+                    
+                    if (this.player) {
+                        // Sync to transport, unmute, and start immediately
+                        this.player.unsync().sync().start(0);
+                        if (this.volume) this.volume.mute = false;
+                        
+                        // Update flags
+                        this.isPlaying = true;
+                        this.isMuted = false;
+                        this.willPlay = true;
                     }
                 }
-                
-                if (this.volume) {
-                    this.volume.mute = false;
-                }
             }
-        } else {
-            // When transport stopped: Toggle armed state
-            this.willPlay = !this.willPlay;
-            console.log(`Puck ${currentIdx + 1} (${this.filename}): WillPlay toggled to ${this.willPlay}`);
-            
-            // Set initial state for when transport starts
-            if (this.willPlay) {
-                this.isMuted = false;
-            }
-            
-            this.isPlaying = false;
+        } catch (err) {
+            console.error(`Error in togglePlayback for puck ${pucks.indexOf(this) + 1}:`, err);
         }
     }
   
@@ -561,23 +550,57 @@ class AudioPuck {
         if (this.recordedPath.length > 0 && (this.isPrimaryDrawingPuck || this.isPlayingPath)) {
             ctx.save();
             
+            // Get the accent color from CSS or use default purple
+            const accentColor = getComputedStyle(document.documentElement)
+                .getPropertyValue('--accent-color').trim() || '#6c63ff';
+            
             // Different style for primary drawing puck vs playback
             if (this.isPrimaryDrawingPuck) {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; // Brighter white for active drawing
+                // Active drawing path style
+                ctx.strokeStyle = accentColor;
                 ctx.lineWidth = 3;
+                ctx.shadowColor = `rgba(108, 99, 255, 0.6)`;
+                ctx.shadowBlur = 8;
+                // Use dotted line for active drawing for better visibility
+                ctx.setLineDash([5, 3]);
             } else {
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white line for playback
-                ctx.lineWidth = 2;
+                // Playback path style
+                ctx.strokeStyle = `rgba(108, 99, 255, 0.7)`;
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = `rgba(108, 99, 255, 0.4)`;
+                ctx.shadowBlur = 5;
+                // Dashed line for playback
+                ctx.setLineDash([8, 4]);
             }
             
+            // Set line cap to round for smoother dashed lines
+            ctx.lineCap = 'round';
+            
             ctx.beginPath();
-            // Start at the first recorded point.
+            // Start at the first recorded point
             ctx.moveTo(this.recordedPath[0].x, this.recordedPath[0].y);
-            // Draw a line through all recorded points.
+            // Draw a line through all recorded points
             for (let i = 1; i < this.recordedPath.length; i++) {
                 ctx.lineTo(this.recordedPath[i].x, this.recordedPath[i].y);
             }
             ctx.stroke();
+            
+            // Draw small circles at the start and end points for added visual appeal
+            ctx.setLineDash([]); // Reset line dash
+            ctx.shadowBlur = 3;
+            ctx.fillStyle = accentColor;
+            
+            // Start point circle
+            ctx.beginPath();
+            ctx.arc(this.recordedPath[0].x, this.recordedPath[0].y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // End point circle
+            const lastPoint = this.recordedPath[this.recordedPath.length - 1];
+            ctx.beginPath();
+            ctx.arc(lastPoint.x, lastPoint.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
             ctx.restore();
         }
 
@@ -949,6 +972,32 @@ class AudioPuck {
     
     // Creates triangle connections between pucks
     createTriangleConnections(targetPuck) {
+        // Case 1: If targetPuck has connections and we don't have many, auto-form a triangle
+        if (targetPuck.connectedPucks.length > 1 && this.connectedPucks.length === 1) {
+            // Find another puck connected to targetPuck that isn't us
+            const otherPuck = targetPuck.connectedPucks.find(puck => puck !== this);
+            if (otherPuck && !this.connectedPucks.includes(otherPuck)) {
+                // Connect to form a triangle
+                this.connectedPucks.push(otherPuck);
+                otherPuck.connectedPucks.push(this);
+                console.log(`Auto-formed triangle with puck ${pucks.indexOf(otherPuck) + 1}`);
+                return;
+            }
+        }
+        
+        // Case 2: If we have connections and targetPuck is new, auto-form a triangle
+        if (this.connectedPucks.length > 1 && targetPuck.connectedPucks.length === 1) {
+            // Find another puck we're connected to that isn't targetPuck
+            const otherPuck = this.connectedPucks.find(puck => puck !== targetPuck);
+            if (otherPuck && !targetPuck.connectedPucks.includes(otherPuck)) {
+                // Connect to form a triangle
+                targetPuck.connectedPucks.push(otherPuck);
+                otherPuck.connectedPucks.push(targetPuck);
+                console.log(`Auto-formed triangle with puck ${pucks.indexOf(otherPuck) + 1}`);
+                return;
+            }
+        }
+        
         // Find all pucks that are connected to both this puck and the target puck
         const commonConnections = this.connectedPucks.filter(puck => 
             targetPuck.connectedPucks.includes(puck) && 
@@ -967,34 +1016,19 @@ class AudioPuck {
                 console.log(`Formed new triangle with puck ${pucks.indexOf(existingPuck) + 1}`);
             }
         } else if (commonConnections.length === 0) {
-            // If no common connections, check if we're connecting to a line
-            const targetConnections = targetPuck.connectedPucks.filter(puck => puck !== this);
-            const thisConnections = this.connectedPucks.filter(puck => puck !== targetPuck);
+            // If no common connections, look for other possibilities
             
-            // If either puck has exactly one other connection, we're forming a triangle
-            if (targetConnections.length === 1 || thisConnections.length === 1) {
-                // Find the puck to complete the triangle
-                const trianglePuck = targetConnections.length === 1 ? targetConnections[0] : thisConnections[0];
-                
-                if (trianglePuck && !this.connectedPucks.includes(trianglePuck)) {
-                    // Connect to form the triangle
-                    this.connectedPucks.push(trianglePuck);
-                    trianglePuck.connectedPucks.push(this);
-                    console.log(`Formed new triangle with puck ${pucks.indexOf(trianglePuck) + 1}`);
-                }
-            } else {
-                // If we're not forming a triangle, look for a potential triangle formation
-                const potentialTrianglePuck = targetPuck.connectedPucks.find(puck => 
-                    !this.connectedPucks.includes(puck) && 
-                    puck !== this
-                );
-                
-                if (potentialTrianglePuck) {
-                    // Connect to form a new triangle
-                    this.connectedPucks.push(potentialTrianglePuck);
-                    potentialTrianglePuck.connectedPucks.push(this);
-                    console.log(`Formed new triangle with puck ${pucks.indexOf(potentialTrianglePuck) + 1}`);
-                }
+            // If we're adding a 4th+ puck to an existing network
+            const potentialTrianglePuck = targetPuck.connectedPucks.find(puck => 
+                !this.connectedPucks.includes(puck) && 
+                puck !== this
+            );
+            
+            if (potentialTrianglePuck) {
+                // Connect to form a new triangle
+                this.connectedPucks.push(potentialTrianglePuck);
+                potentialTrianglePuck.connectedPucks.push(this);
+                console.log(`Formed new triangle with puck ${pucks.indexOf(potentialTrianglePuck) + 1}`);
             }
         }
     }

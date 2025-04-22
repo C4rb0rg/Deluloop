@@ -502,6 +502,9 @@ function attachUIListeners() {
                 }
             }
             
+            // Prevent default browser behavior to avoid issues
+            e.preventDefault();
+            
             // Check if we're in drawing mode
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
@@ -509,11 +512,14 @@ function attachUIListeners() {
             const actualIndex = reversedIndex !== -1 ? pucks.length - 1 - reversedIndex : -1;
 
             if (actualIndex !== -1 && pucks[actualIndex]) {
-                if (typeof pucks[actualIndex].togglePlayback === 'function') {
+                console.log(`Double-clicked puck ${actualIndex + 1}, toggling playback`);
+                try {
                     pucks[actualIndex].togglePlayback();
+                } catch (err) {
+                    console.error(`Error toggling playback for puck ${actualIndex + 1}:`, err);
                 }
             }
-        });
+        }, { passive: false });
 
         canvas.addEventListener('mousedown', (e) => {
             if (!pucks || pucks.length === 0) return;
@@ -580,8 +586,6 @@ function attachUIListeners() {
         canvas.addEventListener('mousemove', (e) => {
             if (!pucks) return;
             const { x, y } = getMousePos(e);
-<<<<<<< Updated upstream
-=======
             
             // Handle panning if in panning mode and dragging
             if (isPanningMode && panningPuck && isPanningDragging) {
@@ -594,7 +598,6 @@ function attachUIListeners() {
                 return;
             }
             
->>>>>>> Stashed changes
             // Check if we're in drawing mode to pass to isHit
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
