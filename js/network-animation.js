@@ -251,7 +251,7 @@ function draw() {
 
     // Request next frame
     requestAnimationFrame(draw);
-}
+} 
 
 function drawBackgroundGradient() {
     if (!networkCtx) return;

@@ -20,6 +20,13 @@ let panningPuck = null;
 let lastMouseX = 0;
 let isPanningDragging = false;
 
+// Add selection state tracking
+let isDragSelecting = false;
+let selectionStartX = 0;
+let selectionStartY = 0;
+let selectionEndX = 0;
+let selectionEndY = 0;
+
 /**
  * Toggle physics on/off for all pucks.
  * When off, friction/bounce/mass = 0. When on, restore previous values.
@@ -576,8 +583,20 @@ function attachUIListeners() {
                             // Set the flag on the dragged puck
                             pucks[draggingPuckIndex].isPrimaryDrawingPuck = true;
                         }
+                        
+                        // Clear selection from all pucks first
+                        pucks.forEach(p => p.isSelected = false);
+                        
+                        // Toggle selection state for the clicked puck
+                        const clickedPuck = pucks[draggingPuckIndex];
+                        if (!e.ctrlKey && !e.shiftKey) {
+                            // If not in connection or drawing mode, toggle selection
+                            clickedPuck.isSelected = !clickedPuck.isSelected;
+                        }
                     }
                 } else {
+                    // Clicked away from any puck - clear all selections
+                    pucks.forEach(p => p.isSelected = false);
                     draggingPuckIndex = null;
                 }
             }
@@ -591,7 +610,7 @@ function attachUIListeners() {
             if (isPanningMode && panningPuck && isPanningDragging) {
                 const barWidth = panningPuck.radius * 2.5;
                 const deltaX = x - lastMouseX;
-                const sensitivity = 180 / (barWidth/2); // Convert pixel movement to angle
+                const sensitivity = 180 / (barWidth/2);
                 const newAngle = panningPuck.panAngle + deltaX * sensitivity;
                 panningPuck.setPan(newAngle);
                 lastMouseX = x;
@@ -621,7 +640,7 @@ function attachUIListeners() {
             ) {
                 newCursor = 'pointer';
             } else if (hoveredPuckIndex !== null) {
-                newCursor = e.ctrlKey ? 'alias' : 'grab'; // 'alias' cursor indicates connection mode
+                newCursor = e.ctrlKey ? 'alias' : 'grab';
             }
             canvas.style.cursor = newCursor;
 
@@ -648,7 +667,7 @@ function attachUIListeners() {
                         pucks.forEach(p => p.isPrimaryDrawingPuck = false);
                         puck.isPrimaryDrawingPuck = true;
                     }
-                    puck.recordPathPoint();  // Record the current position with timestamp.
+                    puck.recordPathPoint();
                     
                     // Update position based on mouse movement.
                     puck.vx = deltaX * 0.5;
@@ -661,70 +680,46 @@ function attachUIListeners() {
                         puck.updateEffects();
                     }
                     
-                    // DRAWING MODE: MOVE CONNECTED PUCKS TOGETHER
-                    // Move all connected pucks as well (if they're not already in playback mode)
+                    // Move connected pucks
                     if (puck.connectedPucks && puck.connectedPucks.length > 0) {
-                        const movedPucks = new Set([puck]); // Track which pucks we've moved to avoid loops
-                        
-                        // Function to recursively move connected pucks
+                        const movedPucks = new Set([puck]);
                         const moveConnectedPucks = (currentPuck, dx, dy) => {
                             for (const connectedPuck of currentPuck.connectedPucks) {
-                                // Skip if already moved this puck or if it's in path playback
                                 if (movedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
                                 
-                                // Move the connected puck by the same delta
                                 connectedPuck.x += dx;
                                 connectedPuck.y += dy;
                                 connectedPuck.vx = deltaX * 0.5;
                                 connectedPuck.vy = deltaY * 0.5;
                                 
-                                // DO NOT record paths for connected pucks - they just follow the primary puck
-                                // Only stop any existing playback
                                 if (connectedPuck.isPlayingPath) {
                                     connectedPuck.isPlayingPath = false;
                                 }
-                                // Make sure they're not recording paths
                                 connectedPuck.isRecordingPath = false;
                                 connectedPuck.isPrimaryDrawingPuck = false;
                                 
-                                // Mark as moved and update effects
                                 movedPucks.add(connectedPuck);
                                 if (typeof connectedPuck.updateEffects === 'function') {
                                     connectedPuck.updateEffects();
                                 }
                                 
-                                // Recursively move pucks connected to this one
                                 moveConnectedPucks(connectedPuck, dx, dy);
                             }
                         };
                         
-                        // Start moving connected pucks
                         moveConnectedPucks(puck, deltaX, deltaY);
                     }
-                    
                 } else {
-                    // NORMAL DRAGGING MODE: ONLY MOVE THE SELECTED PUCK
-                    // Clear any primary drawing puck flags if we're not in shift mode
-                    if (puck.isPrimaryDrawingPuck) {
-                        puck.isPrimaryDrawingPuck = false;
-                    }
-                    
-                    // Normal dragging code—if a puck was recording, end recording to start playback.
-                    if (puck.isRecordingPath) {
-                        puck.stopPathRecording();
-                    }
-                    
-                    // Only update the position of the dragged puck
+                    // Single puck movement
                     puck.vx = deltaX * 0.5;
                     puck.vy = deltaY * 0.5;
                     puck.x = x;
                     puck.y = y;
                     
-                    // Update effects for just this puck
                     if (typeof puck.updateEffects === 'function') {
                         puck.updateEffects();
                     }
-                }                
+                }
             }
         });
 
@@ -740,10 +735,8 @@ function attachUIListeners() {
                 // If we're in connection mode, check if we're over another puck to connect to
                 if (puck.isConnecting) {
                     let targetPuckIndex = null;
-                    // Check if we're in drawing mode
                     const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
                     
-                    // Find the puck we're releasing over (if any)
                     for (let i = 0; i < pucks.length; i++) {
                         if (i !== draggingPuckIndex) {
                             const targetPuck = pucks[i];
@@ -756,43 +749,39 @@ function attachUIListeners() {
                     }
                     
                     if (targetPuckIndex !== null) {
-                        // Complete the connection
                         puck.endConnection(pucks[targetPuckIndex]);
                     } else {
-                        // Cancel the connection if we're not over another puck
                         puck.cancelConnection();
                     }
                 } else {
-                    // Check if we were in drawing mode (Shift key pressed)
                     const wasDrawing = puck.isRecordingPath;
                     
-                    // Normal mouseup behavior for dragging - boost velocities for physics simulation
-                    puck.vx *= 2;
-                    puck.vy *= 2;
+                    // Boost velocities for all selected pucks
+                    const selectedPucks = pucks.filter(p => p.isSelected);
+                    if (selectedPucks.length > 0) {
+                        selectedPucks.forEach(selectedPuck => {
+                            selectedPuck.vx *= 2;
+                            selectedPuck.vy *= 2;
+                        });
+                    } else {
+                        puck.vx *= 2;
+                        puck.vy *= 2;
+                    }
                     
-                    // If we were in drawing mode, also handle connected pucks
                     if (wasDrawing && puck.connectedPucks && puck.connectedPucks.length > 0) {
-                        const processedPucks = new Set([puck]); // Track which pucks we've processed to avoid loops
-                        
-                        // Function to recursively apply velocity boost to connected pucks
+                        const processedPucks = new Set([puck]);
                         const applyVelocityToConnected = (currentPuck) => {
                             for (const connectedPuck of currentPuck.connectedPucks) {
-                                // Skip if already processed or in path playback mode
                                 if (processedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
                                 
-                                // Apply the velocity boost
                                 connectedPuck.vx *= 2;
                                 connectedPuck.vy *= 2;
                                 
-                                // Mark as processed
                                 processedPucks.add(connectedPuck);
-                                
-                                // Recursively process pucks connected to this one
                                 applyVelocityToConnected(connectedPuck);
                             }
                         };
                         
-                        // Start applying velocity to connected pucks
                         applyVelocityToConnected(puck);
                     }
                 }
@@ -892,6 +881,24 @@ function attachUIListeners() {
                 }
             }
         });
+
+        // Add selection rectangle drawing to the animation loop
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw all pucks
+            pucks.forEach(puck => {
+                puck.update();
+                puck.draw(ctx);
+            });
+            
+            // Draw selection rectangle
+            drawSelectionRectangle(ctx);
+            
+            requestAnimationFrame(animate);
+        }
+        
+        animate();
     }
 
     // Global listener: when the Shift key is released, end any ongoing path recordings.
@@ -942,181 +949,6 @@ function attachUIListeners() {
             }
         }
     });
-
-    // Add visual cue when Ctrl is pressed (connection mode)
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Control') {
-            // Update cursor to show connection mode is active
-            if (hoveredPuckIndex !== null && !draggingPuckIndex) {
-                canvas.style.cursor = 'alias';
-            }
-        }
-        
-        // AutoSampler activation with 'r' key
-        if (e.key.toLowerCase() === 'r') {
-            // Only activate if we're hovering over a puck or connection
-            if (hoveredPuckIndex !== null && hoveredPuckIndex >= 0 && hoveredPuckIndex < pucks.length) {
-                const hoveredPuck = pucks[hoveredPuckIndex];
-                
-                // If the puck has connections, include all connected pucks
-                if (hoveredPuck.connectedPucks && hoveredPuck.connectedPucks.length > 0) {
-                    // Create a set to collect all connected pucks (avoid duplicates)
-                    const connectedGroup = new Set([hoveredPuck]);
-                    
-                    // Recursive function to find all connected pucks
-                    const findAllConnectedPucks = (currentPuck) => {
-                        if (!currentPuck.connectedPucks) return;
-                        
-                        currentPuck.connectedPucks.forEach(connectedPuck => {
-                            if (!connectedGroup.has(connectedPuck)) {
-                                connectedGroup.add(connectedPuck);
-                                findAllConnectedPucks(connectedPuck);
-                            }
-                        });
-                    };
-                    
-                    // Find all pucks in this connected network
-                    findAllConnectedPucks(hoveredPuck);
-                    
-                    // Convert to array and toggle autosampling
-                    const pucksForSampling = Array.from(connectedGroup);
-                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
-                        const isActive = autoSampler.toggle(pucksForSampling);
-                        
-                        // Visual feedback
-                        if (isActive) {
-                            pucksForSampling.forEach(puck => {
-                                // Add visual indicator for autosampled pucks
-                                puck.isAutosampling = true;
-                            });
-                            console.log(`AutoSampler started on ${pucksForSampling.length} pucks`);
-                        } else {
-                            pucksForSampling.forEach(puck => {
-                                puck.isAutosampling = false;
-                            });
-                            console.log("AutoSampler stopped");
-                        }
-                    }
-                } else {
-                    // Single puck with no connections - just toggle on this one
-                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
-                        const isActive = autoSampler.toggle([hoveredPuck]);
-                        hoveredPuck.isAutosampling = isActive;
-                        console.log(`AutoSampler ${isActive ? 'started' : 'stopped'} on single puck`);
-                    }
-                }
-            } else {
-                // If not hovering over a puck, check if we're near a connection
-                // This is a bit more complex as we need to detect if the mouse is near a line
-                const mousePos = canvas._lastMousePosition || { x: 0, y: 0 };
-                let nearConnection = false;
-                let connectedGroup = new Set();
-                
-                // Check all pucks for connections
-                for (let i = 0; i < pucks.length && !nearConnection; i++) {
-                    const puck = pucks[i];
-                    if (!puck.connectedPucks || puck.connectedPucks.length === 0) continue;
-                    
-                    // Check each connection
-                    for (const connectedPuck of puck.connectedPucks) {
-                        // Calculate distance from mouse to connection line
-                        const dist = distanceToLine(
-                            mousePos.x, mousePos.y,
-                            puck.x, puck.y,
-                            connectedPuck.x, connectedPuck.y
-                        );
-                        
-                        // If mouse is near a connection line
-                        if (dist <= 20) { // 20px threshold
-                            nearConnection = true;
-                            
-                            // Find all connected pucks in this group
-                            connectedGroup = new Set([puck, connectedPuck]);
-                            const findAllConnected = (currentPuck) => {
-                                if (!currentPuck.connectedPucks) return;
-                                
-                                currentPuck.connectedPucks.forEach(cp => {
-                                    if (!connectedGroup.has(cp)) {
-                                        connectedGroup.add(cp);
-                                        findAllConnected(cp);
-                                    }
-                                });
-                            };
-                            
-                            findAllConnected(puck);
-                            findAllConnected(connectedPuck);
-                            break;
-                        }
-                    }
-                }
-                
-                // If near a connection, toggle autosampling on that group
-                if (nearConnection && connectedGroup.size > 0) {
-                    const pucksForSampling = Array.from(connectedGroup);
-                    if (typeof autoSampler !== 'undefined' && typeof autoSampler.toggle === 'function') {
-                        const isActive = autoSampler.toggle(pucksForSampling);
-                        
-                        // Visual feedback
-                        if (isActive) {
-                            pucksForSampling.forEach(puck => {
-                                puck.isAutosampling = true;
-                            });
-                            console.log(`AutoSampler started on ${pucksForSampling.length} connected pucks`);
-                        } else {
-                            pucksForSampling.forEach(puck => {
-                                puck.isAutosampling = false;
-                            });
-                            console.log("AutoSampler stopped");
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    // Track mouse position for connection line detection
-    canvas.addEventListener('mousemove', (e) => {
-        // Store the last mouse position for line detection
-        const rect = canvas.getBoundingClientRect();
-        canvas._lastMousePosition = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-        
-        // ... existing mousemove code ...
-    });
-
-    // Helper function to calculate distance from a point to a line segment
-    function distanceToLine(x, y, x1, y1, x2, y2) {
-        const A = x - x1;
-        const B = y - y1;
-        const C = x2 - x1;
-        const D = y2 - y1;
-
-        const dot = A * C + B * D;
-        const lenSq = C * C + D * D;
-        let param = -1;
-        
-        if (lenSq !== 0) param = dot / lenSq;
-
-        let xx, yy;
-
-        if (param < 0) {
-            xx = x1;
-            yy = y1;
-        } else if (param > 1) {
-            xx = x2;
-            yy = y2;
-        } else {
-            xx = x1 + param * C;
-            yy = y1 + param * D;
-        }
-
-        const dx = x - xx;
-        const dy = y - yy;
-        
-        return Math.sqrt(dx * dx + dy * dy);
-    }
 
     // === PHYSICS SETTINGS BUTTON SHORT vs. LONG PRESS ===
     let pressTimer = null;
@@ -1209,3 +1041,33 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+// Add function to draw selection rectangle
+function drawSelectionRectangle(ctx) {
+    if (!isDragSelecting) return;
+    
+    ctx.save();
+    ctx.strokeStyle = 'rgba(108, 99, 255, 0.8)';
+    ctx.fillStyle = 'rgba(108, 99, 255, 0.1)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    
+    const x = Math.min(selectionStartX, selectionEndX);
+    const y = Math.min(selectionStartY, selectionEndY);
+    const width = Math.abs(selectionEndX - selectionStartX);
+    const height = Math.abs(selectionEndY - selectionStartY);
+    
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillRect(x, y, width, height);
+    ctx.restore();
+}
+
+// Add function to check if a point is within selection rectangle
+function isPointInSelection(x, y) {
+    const left = Math.min(selectionStartX, selectionEndX);
+    const right = Math.max(selectionStartX, selectionEndX);
+    const top = Math.min(selectionStartY, selectionEndY);
+    const bottom = Math.max(selectionStartY, selectionEndY);
+    
+    return x >= left && x <= right && y >= top && y <= bottom;
+}

@@ -99,6 +99,7 @@ class AudioPuck {
         this.willPlay = true;   // Should the puck play when Transport starts?
         this.isMuted = false;   // Is the puck muted?
         this.reverseActive = false; // Is reverse playback active? (Toggled by right click)
+        this.isSelected = false; // Is the puck selected? (Toggled by click)
 
         // Connection properties
         this.connectedPucks = []; // Array to store references to connected pucks
@@ -450,10 +451,18 @@ class AudioPuck {
             currentFill = invertColor(currentFill);
         }
   
+        // Make the puck brighter if selected
+        if (this.isSelected) {
+            ctx.shadowColor = currentFill;
+            ctx.shadowBlur = 20; // Increased glow for selected state
+            ctx.globalAlpha = Math.min(1.0, puckOpacity + 0.2); // Slightly brighter when selected
+        } else {
+            ctx.shadowColor = currentFill;
+            ctx.shadowBlur = 15;
+            ctx.globalAlpha = puckOpacity;
+        }
+  
         // Draw the puck circle with a shadow.
-        ctx.shadowColor = currentFill;
-        ctx.shadowBlur = 15;
-        ctx.globalAlpha = puckOpacity;
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         ctx.fillStyle = currentFill;

@@ -256,3 +256,5 @@
  TAB ...................................... Complete filename & cycle.
  SHIFT-TAB ...................... ESC-TAB   Complete filename & reverse cycle.
  ctrl-L ................................... Complete filename, list all.
+* [32mmain[m
+  new-features[m
