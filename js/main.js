@@ -466,6 +466,18 @@ function setupKeyboardControls() {
             }
         }
         
+        // Handle Ctrl+X for delete
+        if (e.key === 'x' && isCtrlPressed) {
+            e.preventDefault();
+            
+            // Find the selected puck (if any)
+            const selectedPuckIndex = pucks.findIndex(p => p.isSelected);
+            if (selectedPuckIndex !== -1) {
+                console.log(`Deleting puck ${selectedPuckIndex + 1} using Ctrl+X`);
+                deletePuck(selectedPuckIndex);
+            }
+        }
+        
         // Handle Ctrl+V for paste
         if (e.key === 'v' && isCtrlPressed && copiedPuck) {
             e.preventDefault();

@@ -2,6 +2,7 @@
  * js/network-animation.js
  * Handles the background particle network animation.
  * Depends on global variables: networkCanvas, networkCtx, can_w, can_h (defined in main.js)
+ * Note: Some functions are commented out for optimization as of the latest update.
  */
 
 // --- Network Animation Parameters ---
@@ -114,7 +115,7 @@ function renderNetworkBalls() {
     });
 }
 
-function updateNetworkBalls() {
+/*function updateNetworkBalls() {
     const new_balls = [];
     // Use global can_w, can_h
     const current_w = typeof can_w !== 'undefined' ? can_w : window.innerWidth;
@@ -131,7 +132,7 @@ function updateNetworkBalls() {
         b.alpha = Math.abs(Math.cos(b.phase));
     });
     net_balls = new_balls;
-}
+}*/
 
 function renderNetworkLines() {
     if (!networkCtx) return;
@@ -153,11 +154,11 @@ function renderNetworkLines() {
     }
 }
 
-function addBallIfy() {
+/*function addBallIfy() {
     if (net_balls.length < NET_BALL_NUM) {
         net_balls.push(getRandomBall()); // Use renamed helper
     }
-}
+}*/
 
 // Main function to render one frame of the network animation
 function renderNetworkAnimation() {
@@ -170,10 +171,10 @@ function renderNetworkAnimation() {
     drawBackgroundGradient();
     
     // Then draw the network elements
-    renderNetworkBalls();
-    renderNetworkLines();
-    updateNetworkBalls();
-    addBallIfy();
+    //renderNetworkBalls();
+    //renderNetworkLines();
+    //updateNetworkBalls();
+    //addBallIfy();
 }
 
 // --- Network Animation Initialization ---
@@ -235,13 +236,13 @@ function draw() {
     drawBackgroundGradient();
 
     // Draw connections between pucks
-    drawConnections();
+    //drawConnections();
 
     // Draw pucks
     drawPucks();
 
     // Draw active connection line if any puck is being used to create a connection
-    drawActiveConnection();
+    //drawActiveConnection();
 
     // Draw corner labels
     drawCornerLabels();
