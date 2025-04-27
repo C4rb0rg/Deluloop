@@ -653,6 +653,10 @@ function attachUIListeners() {
                     return;
                 }
                 
+                // Store previous position for calculating velocity
+                const prevX = puck.x;
+                const prevY = puck.y;
+                
                 // Calculate movement delta
                 const deltaX = x - puck.x;
                 const deltaY = y - puck.y;
@@ -669,11 +673,14 @@ function attachUIListeners() {
                     }
                     puck.recordPathPoint();
                     
-                    // Update position based on mouse movement.
-                    puck.vx = deltaX * 0.5;
-                    puck.vy = deltaY * 0.5;
+                    // Update position directly to mouse position
                     puck.x = x;
                     puck.y = y;
+                    
+                    // Calculate velocity based on actual movement (more consistent)
+                    // Use lower multiplier for smoother movement
+                    puck.vx = (x - prevX) * 0.3;
+                    puck.vy = (y - prevY) * 0.3;
                     
                     // Update effects immediately
                     if (typeof puck.updateEffects === 'function') {
@@ -689,8 +696,10 @@ function attachUIListeners() {
                                 
                                 connectedPuck.x += dx;
                                 connectedPuck.y += dy;
-                                connectedPuck.vx = deltaX * 0.5;
-                                connectedPuck.vy = deltaY * 0.5;
+                                
+                                // Apply same velocity calculation with a damping factor
+                                connectedPuck.vx = (x - prevX) * 0.3;
+                                connectedPuck.vy = (y - prevY) * 0.3;
                                 
                                 if (connectedPuck.isPlayingPath) {
                                     connectedPuck.isPlayingPath = false;
@@ -711,10 +720,14 @@ function attachUIListeners() {
                     }
                 } else {
                     // Single puck movement
-                    puck.vx = deltaX * 0.5;
-                    puck.vy = deltaY * 0.5;
+                    // Update position directly to mouse position
                     puck.x = x;
                     puck.y = y;
+                    
+                    // Calculate velocity based on actual movement (more consistent)
+                    // Use lower multiplier for smoother movement
+                    puck.vx = (x - prevX) * 0.3;
+                    puck.vy = (y - prevY) * 0.3;
                     
                     if (typeof puck.updateEffects === 'function') {
                         puck.updateEffects();
@@ -756,16 +769,24 @@ function attachUIListeners() {
                 } else {
                     const wasDrawing = puck.isRecordingPath;
                     
+                    // Apply a consistent, moderate boost to velocity when releasing the puck
+                    // This gives a more predictable "throw" feeling
+                    const velocityBoost = 1.5; // Reduced from 2.0 for more control
+                    
                     // Boost velocities for all selected pucks
                     const selectedPucks = pucks.filter(p => p.isSelected);
                     if (selectedPucks.length > 0) {
                         selectedPucks.forEach(selectedPuck => {
-                            selectedPuck.vx *= 2;
-                            selectedPuck.vy *= 2;
+                            // Apply maximum velocity cap for more predictable movement
+                            const maxVelocity = 15;
+                            selectedPuck.vx = Math.min(Math.max(selectedPuck.vx * velocityBoost, -maxVelocity), maxVelocity);
+                            selectedPuck.vy = Math.min(Math.max(selectedPuck.vy * velocityBoost, -maxVelocity), maxVelocity);
                         });
                     } else {
-                        puck.vx *= 2;
-                        puck.vy *= 2;
+                        // Apply maximum velocity cap for more predictable movement
+                        const maxVelocity = 15;
+                        puck.vx = Math.min(Math.max(puck.vx * velocityBoost, -maxVelocity), maxVelocity);
+                        puck.vy = Math.min(Math.max(puck.vy * velocityBoost, -maxVelocity), maxVelocity);
                     }
                     
                     if (wasDrawing && puck.connectedPucks && puck.connectedPucks.length > 0) {
@@ -774,8 +795,10 @@ function attachUIListeners() {
                             for (const connectedPuck of currentPuck.connectedPucks) {
                                 if (processedPucks.has(connectedPuck) || connectedPuck.isPlayingPath) continue;
                                 
-                                connectedPuck.vx *= 2;
-                                connectedPuck.vy *= 2;
+                                // Apply maximum velocity cap for more predictable movement
+                                const maxVelocity = 15;
+                                connectedPuck.vx = Math.min(Math.max(connectedPuck.vx * velocityBoost, -maxVelocity), maxVelocity);
+                                connectedPuck.vy = Math.min(Math.max(connectedPuck.vy * velocityBoost, -maxVelocity), maxVelocity);
                                 
                                 processedPucks.add(connectedPuck);
                                 applyVelocityToConnected(connectedPuck);
@@ -1027,6 +1050,7 @@ function attachUIListeners() {
 
 // Add keyboard event listener for 'P' key
 document.addEventListener('keydown', (e) => {
+    // Panning mode toggle with 'p' key
     if (e.key.toLowerCase() === 'p' && hoveredPuckIndex !== null) {
         const puck = pucks[hoveredPuckIndex];
         if (puck) {
@@ -1037,6 +1061,29 @@ document.addEventListener('keydown', (e) => {
                 canvas.style.cursor = 'ew-resize';
             } else {
                 canvas.style.cursor = 'crosshair';
+            }
+        }
+    }
+    
+    // Ctrl+Z for undo
+    if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (typeof undoDeletePuck === 'function') {
+            console.log('Ctrl+Z pressed: Triggering undo');
+            undoDeletePuck();
+        }
+    }
+    
+    // Spacebar for play/pause toggle
+    if (e.key === ' ' || e.code === 'Space') {
+        // Don't trigger if user is typing in an input field
+        if (document.activeElement.tagName !== 'INPUT' && 
+            document.activeElement.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            const playToggleButton = document.getElementById('play-toggle');
+            if (playToggleButton) {
+                console.log('Spacebar pressed: Triggering play/pause');
+                playToggleButton.click();
             }
         }
     }

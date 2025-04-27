@@ -20,6 +20,7 @@ let isRecordingPath = false;
 let isPlayingPath = false;
 let connectingPuckIndex = null; // Track which puck is being used to create a connection
 let disconnectTimer = null; // Timer for long-press disconnection
+let copiedPuck = null; // Store the copied puck for Ctrl+C/V functionality
 
 // Canvas and Context References (needed by multiple modules)
 const networkCanvas = document.getElementById('xy-pad'); // Assumes same canvas for both
@@ -276,6 +277,55 @@ function undoDeletePuck() {
     console.log("--- undoDeletePuck finished ---");
 }
 
+/**
+ * Duplicates a puck and adds it to the pucks array
+ * @param {number} indexToDuplicate - The index in the `pucks` array to duplicate
+ * @returns {number} The index of the newly created puck
+ */
+function duplicatePuck(indexToDuplicate) {
+    console.log(`--- duplicatePuck called for index: ${indexToDuplicate} ---`);
+    
+    // Validate index
+    if (indexToDuplicate < 0 || indexToDuplicate >= pucks.length || !pucks[indexToDuplicate]) {
+        console.error(`Invalid index or puck not found at index: ${indexToDuplicate}`);
+        return -1;
+    }
+    
+    const puckToDuplicate = pucks[indexToDuplicate];
+    console.log(`Duplicating Puck: ${puckToDuplicate.filename}`);
+    
+    // Create a new puck with the same audio and properties
+    const newPuck = new AudioPuck(
+        pucks.length, // New index at the end of array
+        puckToDuplicate.url,
+        puckToDuplicate.filename,
+        puckToDuplicate.isRecorded
+    );
+    
+    // Position the duplicate slightly offset from the original
+    newPuck.x = puckToDuplicate.x + 30;
+    newPuck.y = puckToDuplicate.y + 30;
+    
+    // Copy other properties
+    newPuck.volumeValue = puckToDuplicate.volumeValue;
+    if (newPuck.volume) {
+        newPuck.volume.volume.value = puckToDuplicate.volumeValue;
+    }
+    
+    // Copy radius
+    const minVol = -48; const maxVol = 6; const minRadius = 12; const maxRadius = 35;
+    const norm = (newPuck.volumeValue - minVol) / (maxVol - minVol);
+    newPuck.radius = minRadius + Math.max(0, Math.min(1, norm)) * (maxRadius - minRadius);
+    
+    // Set the duplicate flag
+    newPuck.isDuplicate = true;
+    
+    // Add the new puck to the array
+    pucks.push(newPuck);
+    console.log(`Puck duplicated. New puck index: ${pucks.length - 1}`);
+    
+    return pucks.length - 1;
+}
 
 // --- Animation Loop ---
 let lastFrameTime = 0; // Timestamp of the last animation frame
@@ -391,6 +441,40 @@ function setupKeyboardControls() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Control') {
             isCtrlPressed = true;
+        }
+        
+        // Handle Ctrl+D for duplicate
+        if (e.key === 'd' && isCtrlPressed) {
+            e.preventDefault(); // Prevent browser's default bookmark action
+            
+            // Find the selected puck (if any)
+            const selectedPuckIndex = pucks.findIndex(p => p.isSelected);
+            if (selectedPuckIndex !== -1) {
+                duplicatePuck(selectedPuckIndex);
+            }
+        }
+        
+        // Handle Ctrl+C for copy
+        if (e.key === 'c' && isCtrlPressed) {
+            e.preventDefault();
+            
+            // Find the selected puck (if any)
+            const selectedPuckIndex = pucks.findIndex(p => p.isSelected);
+            if (selectedPuckIndex !== -1) {
+                copiedPuck = pucks[selectedPuckIndex];
+                console.log(`Copied puck ${selectedPuckIndex + 1} to clipboard`);
+            }
+        }
+        
+        // Handle Ctrl+V for paste
+        if (e.key === 'v' && isCtrlPressed && copiedPuck) {
+            e.preventDefault();
+            
+            // Get the index of the copied puck
+            const copiedPuckIndex = pucks.findIndex(p => p === copiedPuck);
+            if (copiedPuckIndex !== -1) {
+                duplicatePuck(copiedPuckIndex);
+            }
         }
     });
 

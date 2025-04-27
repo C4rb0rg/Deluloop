@@ -39,6 +39,26 @@ function invertColor(color) {
     }
     return `rgb(${r}, ${g}, ${b})`;
 }
+
+// Darkens or lightens a color. Supports both hex and rgb/rgba strings.
+function adjustColor(color, amount) {
+    // If the color starts with a "#", convert to RGB first.
+    if (color.startsWith('#')) {
+        const { r, g, b } = hexToRgb(color);
+        return `rgb(${Math.min(255, Math.max(0, r + amount))}, ${Math.min(255, Math.max(0, g + amount))}, ${Math.min(255, Math.max(0, b + amount))})`;
+    }
+  
+    // Otherwise, assume an rgb or rgba string.
+    const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    if (!rgbMatch) return color; // fallback
+    const r = Math.min(255, Math.max(0, parseInt(rgbMatch[1], 10) + amount));
+    const g = Math.min(255, Math.max(0, parseInt(rgbMatch[2], 10) + amount));
+    const b = Math.min(255, Math.max(0, parseInt(rgbMatch[3], 10) + amount));
+    if (rgbMatch[4] !== undefined) {
+        return `rgba(${r}, ${g}, ${b}, ${rgbMatch[4]})`;
+    }
+    return `rgb(${r}, ${g}, ${b})`;
+}
   
 class AudioPuck {
     constructor(index, audioUrl, filename, isRecorded = false) {
@@ -47,6 +67,7 @@ class AudioPuck {
         this.url = audioUrl;
         this.filename = filename;
         this.isRecorded = isRecorded;
+        this.isDuplicate = false; // Flag to indicate if this is a duplicate puck
   
         // Position & Appearance
         const initialX = (canvas?.width / 2 || 300) + (Math.random() - 0.5) * 100;
@@ -450,6 +471,11 @@ class AudioPuck {
         if (this.reverseActive) {
             currentFill = invertColor(currentFill);
         }
+        
+        // Apply different shade to duplicated pucks
+        if (this.isDuplicate) {
+            currentFill = adjustColor(currentFill, -40); // Make it darker
+        }
   
         // Make the puck brighter if selected
         if (this.isSelected) {
@@ -832,14 +858,28 @@ class AudioPuck {
             this.updateEffects();
             return;
         }
+        
         if (!this.isRecordingPath && !this.isConnecting) { // Don't update physics during connection
-            // Normal physics update if not recording.
-            this.vx *= this.friction;
-            this.vy *= this.friction;
-            this.x += this.vx;
-            this.y += this.vy;
-            this.handleEdgeCollisions();
-            this.handlePuckCollisions();
+            // Only apply physics if we have some velocity
+            if (Math.abs(this.vx) > 0.01 || Math.abs(this.vy) > 0.01) {
+                // Apply velocity decay with a minimum threshold for smoother stops
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                
+                // Stop very small movements to prevent jitter
+                if (Math.abs(this.vx) < 0.01) this.vx = 0;
+                if (Math.abs(this.vy) < 0.01) this.vy = 0;
+                
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // Handle collisions
+                this.handleEdgeCollisions();
+                this.handlePuckCollisions();
+            }
+            
+            // Always update audio effects based on position
             if (typeof this.updateEffects === 'function') {
                 this.updateEffects();
             }
@@ -848,21 +888,49 @@ class AudioPuck {
   
     /** Handles collisions with the canvas edges. */
     handleEdgeCollisions() {
+        const minVelocity = 0.1; // Minimum velocity threshold
+        const edgeBuffer = 0.5; // Small buffer to prevent getting stuck at edges
+        
+        // Left edge
         if (this.x - this.radius < 0) {
-            this.x = this.radius;
-            this.vx = -this.vx * this.bounce;
+            this.x = this.radius + edgeBuffer;
+            // Only bounce if we have significant velocity
+            if (Math.abs(this.vx) > minVelocity) {
+                this.vx = -this.vx * this.bounce;
+            } else {
+                // Stop horizontal motion if velocity is too small
+                this.vx = 0;
+            }
         }
+        
+        // Right edge
         if (this.x + this.radius > canvas.width) {
-            this.x = canvas.width - this.radius;
-            this.vx = -this.vx * this.bounce;
+            this.x = canvas.width - this.radius - edgeBuffer;
+            if (Math.abs(this.vx) > minVelocity) {
+                this.vx = -this.vx * this.bounce;
+            } else {
+                this.vx = 0;
+            }
         }
+        
+        // Top edge
         if (this.y - this.radius < 0) {
-            this.y = this.radius;
-            this.vy = -this.vy * this.bounce;
+            this.y = this.radius + edgeBuffer;
+            if (Math.abs(this.vy) > minVelocity) {
+                this.vy = -this.vy * this.bounce;
+            } else {
+                this.vy = 0;
+            }
         }
+        
+        // Bottom edge
         if (this.y + this.radius > canvas.height) {
-            this.y = canvas.height - this.radius;
-            this.vy = -this.vy * this.bounce;
+            this.y = canvas.height - this.radius - edgeBuffer;
+            if (Math.abs(this.vy) > minVelocity) {
+                this.vy = -this.vy * this.bounce;
+            } else {
+                this.vy = 0;
+            }
         }
     }
   
@@ -876,30 +944,62 @@ class AudioPuck {
             const dx = otherPuck.x - this.x;
             const dy = otherPuck.y - this.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
+            const minDistance = this.radius + otherPuck.radius;
             
-            if (distance < this.radius + otherPuck.radius) {
+            if (distance < minDistance) {
+                // Calculate normal vector
                 const nx = dx / distance;
                 const ny = dy / distance;
+                
+                // Calculate relative velocity
                 const relativeVx = this.vx - otherPuck.vx;
                 const relativeVy = this.vy - otherPuck.vy;
                 const velocityAlongNormal = relativeVx * nx + relativeVy * ny;
                 
+                // Only separate if pucks are moving towards each other
                 if (velocityAlongNormal > 0) continue;
                 
-                const restitution = Math.min(this.bounce, otherPuck.bounce);
+                // Average the bounce factor for more predictable results
+                const restitution = Math.min(0.8, (this.bounce + otherPuck.bounce) / 2);
+                
+                // Calculate impulse
                 const j = -(1 + restitution) * velocityAlongNormal;
                 const impulse = j / (1 / this.mass + 1 / otherPuck.mass);
                 
-                this.vx -= (impulse * nx) / this.mass;
-                this.vy -= (impulse * ny) / this.mass;
-                otherPuck.vx += (impulse * nx) / otherPuck.mass;
-                otherPuck.vy += (impulse * ny) / otherPuck.mass;
+                // Apply impulse with a dampening factor for smoother movement
+                const dampening = 0.8; // Reduce energy slightly during collisions
+                this.vx -= (impulse * nx * dampening) / this.mass;
+                this.vy -= (impulse * ny * dampening) / this.mass;
+                otherPuck.vx += (impulse * nx * dampening) / otherPuck.mass;
+                otherPuck.vy += (impulse * ny * dampening) / otherPuck.mass;
                 
-                const overlap = (this.radius + otherPuck.radius - distance) / 2;
-                this.x -= overlap * nx;
-                this.y -= overlap * ny;
-                otherPuck.x += overlap * nx;
-                otherPuck.y += overlap * ny;
+                // Separate pucks to prevent overlap (position correction)
+                const overlap = minDistance - distance;
+                const correctionAmount = overlap * 0.5; // Each puck moves half the distance
+                
+                // Apply separation with a slight buffer to prevent sticking
+                const correctionX = nx * correctionAmount * 1.01;
+                const correctionY = ny * correctionAmount * 1.01;
+                
+                this.x -= correctionX;
+                this.y -= correctionY;
+                otherPuck.x += correctionX;
+                otherPuck.y += correctionY;
+                
+                // Add minimum velocity to pucks with near-zero velocity after collision
+                // This prevents pucks from getting stuck together
+                const minVelocity = 0.05;
+                if (Math.abs(this.vx) < minVelocity && Math.abs(this.vy) < minVelocity) {
+                    const angle = Math.random() * Math.PI * 2;
+                    this.vx += Math.cos(angle) * minVelocity;
+                    this.vy += Math.sin(angle) * minVelocity;
+                }
+                
+                if (Math.abs(otherPuck.vx) < minVelocity && Math.abs(otherPuck.vy) < minVelocity) {
+                    const angle = Math.random() * Math.PI * 2;
+                    otherPuck.vx += Math.cos(angle) * minVelocity;
+                    otherPuck.vy += Math.sin(angle) * minVelocity;
+                }
             }
         }
     }
