@@ -3,5 +3,7 @@
 .env/
 *.env
 
-# Virtual environment
-1.wav
+# Misc
+assets/1.wav
+output/
+assets/sep_drums_1.mp3
