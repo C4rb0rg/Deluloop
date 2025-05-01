@@ -1,0 +1,7 @@
+# Virtual environment
+.venv/
+.env/
+*.env
+
+# Virtual environment
+1.wav

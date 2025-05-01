@@ -130,7 +130,12 @@ function attachUIListeners() {
     const llmToggleBtn = document.getElementById('llm-toggle-btn');
     const llmHideBtn = document.getElementById('llm-hide-btn');
     const llmControlsContainer = document.getElementById('llm-controls-container');
-
+    
+    // Mic Input to LLM
+    let llmMicRecording = false;
+    let llmMediaRecorder = null;
+    let llmRecordedChunks = [];
+    let micBlobUrl = null;
     // Physics settings references
     const physicsSettingsPanel = document.getElementById('physics-settings-panel');
     const physicsSettingsButton = document.getElementById('physics-settings');
@@ -428,21 +433,159 @@ function attachUIListeners() {
     }
 
     if (llmMicButton) {
-        llmMicButton.addEventListener('click', () => {
-            alert("LLM Mic not implemented yet.");
+        llmMicButton.addEventListener('click', async () => {
+            try {
+                if (!llmMicRecording) {
+                    // Start recording
+                    if (Tone.context.state !== 'running') {
+                        await Tone.start();
+                    }
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    const options = { mimeType: 'audio/webm' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        options.mimeType = 'audio/ogg';
+                    }
+                    
+                    llmMediaRecorder = new MediaRecorder(stream, options);
+                    llmRecordedChunks = [];
+                    
+                    llmMediaRecorder.ondataavailable = e => {
+                        if (e.data.size > 0) llmRecordedChunks.push(e.data);
+                    };
+                    
+                    llmMediaRecorder.onstop = () => {
+                        // Stop tracks
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        // Create blob and URL
+                        const audioBlob = new Blob(llmRecordedChunks, { 
+                            type: llmMediaRecorder.mimeType || 'audio/webm' 
+                        });
+                        
+                        // Revoke previous URL if exists
+                        if (micBlobUrl) {
+                            URL.revokeObjectURL(micBlobUrl);
+                        }
+                        
+                        micBlobUrl = URL.createObjectURL(audioBlob);
+                        
+                        // Update button state
+                        llmMicButton.classList.remove('recording');
+                        llmMicButton.dataset.tooltip = "Re-record voice";
+                    };
+                    
+                    llmMediaRecorder.start();
+                    llmMicRecording = true;
+                    llmMicButton.classList.add('recording');
+                    llmMicButton.dataset.tooltip = "Stop recording";
+                    
+                } else {
+                    // Stop recording
+                    if (llmMediaRecorder && llmMediaRecorder.state === "recording") {
+                        llmMediaRecorder.stop();
+                    }
+                    llmMicRecording = false;
+                }
+                
+            } catch (err) {
+                console.error("LLM Mic error:", err);
+                alert("Could not access microphone. Please check permissions.");
+                llmMicRecording = false;
+                llmMicButton.classList.remove('recording');
+            }
         });
     }
 
     if (llmStartButton) {
-        llmStartButton.addEventListener('click', () => {
+        llmStartButton.addEventListener('click', async () => {
             const promptValue = llmPromptInput.value.trim();
             if (!promptValue) {
                 alert("Enter a prompt first.");
                 return;
             }
-            alert(`Would send prompt to LLM: "${promptValue}" (not implemented).`);
+    
+            // Default chord progression
+            const defaultChords = [
+                ["C", 0.0], ["D", 2.0], ["F", 4.0], 
+                ["Ab", 6.0], ["Bb", 7.0], ["C", 8.0]
+            ];
+    
+            try {
+
+                // Show loading state
+                llmStartButton.disabled = true;
+                llmStartButton.textContent = "Generating...";
+
+                const formData = new FormData();
+                formData.append('prompt', promptValue);
+                formData.append('chords', JSON.stringify(defaultChords));
+
+                // Mic Input for Drums   
+                if (micBlobUrl) {
+                    const response = await fetch(micBlobUrl);
+                    const blob = await response.blob();
+                    formData.append('drums', blob);
+                } else {
+                    formData.append('drums', null);
+                }
+                
+                const response = await fetch('http://localhost:8000/generate', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to generate music');
+                }
+
+                // Empty mic
+                if (micBlobUrl) {
+                    URL.revokeObjectURL(micBlobUrl);
+                    micBlobUrl = null;
+                }
+       
+                // Get the blob and file path    
+                const blob = await response.blob();
+                const filePath = response.headers.get('X-File-Path');
+
+                // Create blob URL for the audio
+                const blobUrl = URL.createObjectURL(blob);
+
+                // // Get the file path from response headers
+                // const filePath = response.headers.get('X-File-Path');
+                // console.log(`Generated file saved at: ${filePath}`);
+    
+                // // Create and play audio
+                // const audio = new Audio(url);
+                // audio.play();
+                
+                // Create a new AudioPuck with the generated audio
+                const newPuck = new AudioPuck(
+                    pucks.length, 
+                    blobUrl,
+                    `Generated ${pucks.length + 1}`, 
+                    false
+                );
+                
+                // Add the puck to the array
+                pucks.push(newPuck);
+                
+                console.log(`Created new puck from generated audio: ${filePath}`);
+
+            } catch (error) {
+                console.error('Error generating music:', error);
+                alert(`Error generating music: ${error.message}`);
+            } finally {
+                // Reset button state
+                llmStartButton.disabled = false;
+                llmStartButton.textContent = "Generate";
+            }
         });
-    }
+    }    
+
 
     if (llmDrumButton) {
         llmDrumButton.addEventListener('click', () => {

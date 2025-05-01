@@ -1,0 +1,12 @@
+# AudioCraft requires Python 3.9, PyTorch 2.1.0
+# AudioCraft recommends installing FFMPEG: https://ffmpeg.org/download.html
+# uv pip install torch==2.1.0 -f https://download.pytorch.org/whl/cu121
+
+streamlit>=1.10.0
+torchaudio==2.1.0
+huggingface-hub>=0.19.0
+streamlit-audiorecorder==0.0.6
+git+https://git@github.com/facebookresearch/audiocraft#egg=audiocraft
+fastapi
+matplotlib
+uvicorn

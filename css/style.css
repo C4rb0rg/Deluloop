@@ -548,3 +548,14 @@ body, html {
 #llm-hide-btn.llm-hide-btn:active {
     transform: translateX(-50%) scale(0.95);
 }
+
+
+#llm-mic-btn.recording {
+    background: var(--accent-color);
+    color: white;
+    animation: pulse-record 1.5s infinite ease-in-out;
+}
+
+#llm-mic-btn.recording i {
+    color: white;
+}
