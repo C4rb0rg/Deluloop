@@ -123,10 +123,9 @@ function attachUIListeners() {
 
     // LLM references
     const llmPromptInput = document.getElementById('llm-prompt-input');
+    const llmChordInput = document.getElementById('llm-chord-input');
     const llmMicButton = document.getElementById('llm-mic-btn');
     const llmStartButton = document.getElementById('llm-start-btn');
-    const llmDrumButton = document.getElementById('llm-drum-btn');
-    const llmMelodyButton = document.getElementById('llm-melody-btn');
     const llmToggleBtn = document.getElementById('llm-toggle-btn');
     const llmHideBtn = document.getElementById('llm-hide-btn');
     const llmControlsContainer = document.getElementById('llm-controls-container');
@@ -507,11 +506,29 @@ function attachUIListeners() {
                 return;
             }
 
-            // Default chord progression
-            const defaultChords = [
-                ["C", 0.0], ["D", 2.0], ["F", 4.0], 
-                ["Ab", 6.0], ["Bb", 7.0], ["C", 8.0]
-            ];
+            // Get chord progression from input or use default
+            const chordInputValue = llmChordInput.value.trim();
+            let chordsToUse;
+            
+            if (chordInputValue) {
+                const parsedChords = parseChordProgression(chordInputValue);
+                if (parsedChords) {
+                    console.log("Using chord progression from input:", parsedChords);
+                    chordsToUse = parsedChords;
+                } else {
+                    console.log("Invalid chord progression format, using default");
+                    chordsToUse = [
+                        ["C", 0.0], ["D", 2.0], ["F", 4.0], 
+                        ["Ab", 6.0], ["Bb", 7.0], ["C", 8.0]
+                    ];
+                }
+            } else {
+                console.log("No chord progression entered, using default");
+                chordsToUse = [
+                    ["C", 0.0], ["D", 2.0], ["F", 4.0], 
+                    ["Ab", 6.0], ["Bb", 7.0], ["C", 8.0]
+                ];
+            }
 
             try {
                 // Show loading state
@@ -520,7 +537,7 @@ function attachUIListeners() {
 
                 const formData = new FormData();
                 formData.append('prompt', promptValue);
-                formData.append('chords', JSON.stringify(defaultChords));
+                formData.append('chords', JSON.stringify(chordsToUse));
 
                 // Only append drums if we have recorded audio
                 if (micBlobUrl) {
@@ -576,29 +593,46 @@ function attachUIListeners() {
         });
     }
 
-
-    if (llmDrumButton) {
-        llmDrumButton.addEventListener('click', () => {
-            const promptValue = llmPromptInput.value.trim();
-            alert(`Requesting Drums from LLM (placeholder). Prompt: "${promptValue}"`);
-        });
-    }
-
-    if (llmMelodyButton) {
-        llmMelodyButton.addEventListener('click', () => {
-            const promptValue = llmPromptInput.value.trim();
-            alert(`Requesting Melody from LLM (placeholder). Prompt: "${promptValue}"`);
-        });
-    }
-
     // === CANVAS MOUSE LOGIC ===
     if (canvas) {
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             const { x, y } = getMousePos(e);
+            
             // Check if we're in drawing mode
             const isDrawingMode = e.shiftKey || pucks.some(p => p.isRecordingPath);
             
+            // First check if we're clicking on a path
+            if (e.shiftKey) {
+                // Find the puck whose path was clicked
+                const clickedPuck = pucks.find(puck => {
+                    if (!puck.recordedPath || puck.recordedPath.length < 2) return false;
+                    
+                    // Check if click is near any segment of the path
+                    for (let i = 0; i < puck.recordedPath.length - 1; i++) {
+                        const p1 = puck.recordedPath[i];
+                        const p2 = puck.recordedPath[i + 1];
+                        
+                        // Calculate distance from point to line segment
+                        const distance = distanceToLineSegment(x, y, p1.x, p1.y, p2.x, p2.y);
+                        if (distance < 10) { // 10 pixels threshold
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                if (clickedPuck) {
+                    // Clear the path
+                    clickedPuck.recordedPath = [];
+                    clickedPuck.isPlayingPath = false;
+                    clickedPuck.isRecordingPath = false;
+                    console.log(`Cleared path for puck ${pucks.indexOf(clickedPuck) + 1}`);
+                    return;
+                }
+            }
+            
+            // If not clicking on a path, proceed with normal puck handling
             const reversedIndex = pucks.slice().reverse().findIndex(p => p.isHit(x, y, isDrawingMode));
             const actualIndex = reversedIndex !== -1 ? pucks.length - 1 - reversedIndex : -1;
             
@@ -1003,40 +1037,17 @@ function attachUIListeners() {
             }
         }, { passive: false });
 
-        // Add handler for ctrl+right-click to stop path playback
-        canvas.addEventListener('contextmenu', function(e) {
-            // Check if the Ctrl key is pressed during right click
-            if (e.ctrlKey) {
-                e.preventDefault();
-                
-                // Get mouse position
-                const rect = canvas.getBoundingClientRect();
-                const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-                const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-                
-                // Find pucks near the click location
-                const detectionRadius = 50; // Adjust radius as needed
-                let clickedAnyPuck = false;
-                
-                // Loop through all pucks to find ones within detection radius
-                for (const puck of pucks) {
-                    const distance = Math.sqrt(
-                        Math.pow(mouseX - puck.x, 2) + 
-                        Math.pow(mouseY - puck.y, 2)
-                    );
-                    
-                    if (distance <= detectionRadius) {
-                        // Stop path playback for this puck and all connected pucks
-                        puck.stopPathPlayback(true);
-                        clickedAnyPuck = true;
-                    }
+        // Add helper function to calculate distance from point to line segment
+        function distanceToLineSegment(px, py, x1, y1, x2, y2) {
+            const lineLength = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+            if (lineLength === 0) return Math.sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
+            
+            const t = Math.max(0, Math.min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / (lineLength * lineLength)));
+            const projX = x1 + t * (x2 - x1);
+            const projY = y1 + t * (y2 - y1);
+            
+            return Math.sqrt((px - projX) * (px - projX) + (py - projY) * (py - projY));
                 }
-                
-                if (clickedAnyPuck) {
-                    console.log('Stopped path playback for pucks near click and their connected pucks');
-                }
-            }
-        });
 
         // Add selection rectangle drawing to the animation loop
         function animate() {
@@ -1179,6 +1190,44 @@ function attachUIListeners() {
     updatePhysicsButtonVisual();
 
     console.log("All UI event listeners attached.");
+
+    // Real-time validation for chord progression input
+    if (llmChordInput) {
+        llmChordInput.addEventListener('input', function () {
+            const value = llmChordInput.value.trim();
+            let showError = false;
+            
+            if (value !== "") {
+                const chordPattern = /\[([^\]]+)\]/g;
+                const matches = value.match(chordPattern);
+                
+                if (matches && matches.length > 0) {
+                    // Valid note pattern (allows for sharps, flats, and numbers for chord types)
+                    const validNotePattern = /^[A-G](b|#)?(maj|min|m|M|aug|dim|sus|add)?[0-9]*$/i;
+                    
+                    // Check each group
+                    for (const match of matches) {
+                        const [chord, time] = match.slice(1, -1).split(',').map(s => s.trim());
+                        
+                        // Check if chord is a valid note and time is a valid number
+                        if (!chord || !validNotePattern.test(chord) || isNaN(parseFloat(time))) {
+                            showError = true;
+                            break;
+                        }
+                    }
+                } else {
+                    // No valid groups at all
+                    showError = true;
+                }
+            }
+            
+            if (showError) {
+                llmChordInput.classList.add('error');
+            } else {
+                llmChordInput.classList.remove('error');
+            }
+        });
+    }
 }
 
 // Add keyboard event listener for 'P' key
@@ -1250,4 +1299,55 @@ function isPointInSelection(x, y) {
     const bottom = Math.max(selectionStartY, selectionEndY);
     
     return x >= left && x <= right && y >= top && y <= bottom;
+}
+
+// Function to parse chord progression from prompt
+function parseChordProgression(prompt) {
+    // Look for chord progression pattern in the prompt
+    const chordPattern = /\[([^\]]+)\]/g;
+    const matches = prompt.match(chordPattern);
+    
+    if (!matches) return null;
+    
+    try {
+        // Parse each chord entry
+        const chords = matches.map(match => {
+            // Remove brackets and split by comma
+            const [chord, time] = match.slice(1, -1).split(',').map(s => s.trim());
+            
+            // Handle multi-digit numbers by adding decimal after first digit
+            let timeValue;
+            if (time.length > 1) {
+                // Insert decimal after first digit
+                const formattedTime = time.charAt(0) + '.' + time.slice(1);
+                timeValue = parseFloat(formattedTime);
+            } else {
+                timeValue = parseFloat(time);
+            }
+            
+            if (isNaN(timeValue)) {
+                throw new Error(`Invalid time value: ${time}`);
+            }
+            
+            // Ensure time doesn't exceed 10
+            if (timeValue > 10) {
+                timeValue = 10;
+            }
+            
+            return [chord, timeValue];
+        });
+        
+        // Validate the format
+        if (chords.every(([chord, time]) => 
+            typeof chord === 'string' && 
+            !isNaN(time) && 
+            time >= 0
+        )) {
+            return chords;
+        }
+    } catch (e) {
+        console.error('Error parsing chord progression:', e);
+    }
+    
+    return null;
 }

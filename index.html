@@ -50,21 +50,18 @@
         <i class="fas fa-chevron-down"></i>
     </button>
 
-    <div id="llm-prompt-area">
-        <input type="text" id="llm-prompt-input" placeholder="Describe the music you want to create...">
+    <div id="llm-chord-progression-area" class="llm-input-area">
+        <div class="llm-input-title">Chord Progression</div>
+        <input type="text" id="llm-chord-input" class="llm-input" placeholder="Enter chord progression (e.g., [C,0.0] [D,2.0] [F,4.0] [Ab,6.0] [Bb,7.0] [C,8.0])" value="[C,0.0] [D,2.0] [F,4.0] [Ab,6.0] [Bb,7.0] [C,8.0]">
+    </div>
+
+    <div id="llm-prompt-area" class="llm-input-area">
+        <input type="text" id="llm-prompt-input" class="llm-input" placeholder="Describe the music you want to create...">
         <button id="llm-mic-btn" class="llm-button" data-tooltip="Input prompt via Mic">
             <i class="fas fa-microphone"></i>
         </button>
         <button id="llm-start-btn" class="llm-button llm-start-button" data-tooltip="Send prompt to LLM">
             Start
-        </button>
-    </div>
-    <div id="llm-generation-buttons">
-        <button id="llm-drum-btn" class="llm-button llm-generate-button" data-tooltip="Generate/Load Drums">
-            Drum
-        </button>
-        <button id="llm-melody-btn" class="llm-button llm-generate-button" data-tooltip="Generate/Load Melody">
-            Melody
         </button>
     </div>
 </div>

@@ -559,3 +559,77 @@ body, html {
 #llm-mic-btn.recording i {
     color: white;
 }
+
+.llm-input-area {
+    margin-bottom: 15px;
+    width: 100%;
+}
+
+.llm-input-title {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.llm-input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: #f9f9f9;
+    transition: border-color 0.3s ease;
+}
+
+.llm-input:focus {
+    outline: none;
+    border-color: #4a90e2;
+    background-color: #fff;
+}
+
+#llm-chord-input {
+    width: 100%;
+    padding: 12px 15px;
+    font-size: 14px;
+    font-family: 'Poppins', sans-serif;
+    background-color: rgba(40, 42, 50, 0.8);
+    color: var(--text-color);
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    outline: none;
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: inset 2px 2px 5px var(--shadow-dark),
+                inset -2px -2px 5px var(--shadow-light);
+    margin-bottom: 0;
+    box-sizing: border-box;
+}
+
+#llm-chord-input.error {
+    border-color: #ff4444;
+    background-color: rgba(255, 68, 68, 0.1);
+    box-shadow: 0 0 0 3px rgba(255, 68, 68, 0.3),
+                inset 2px 2px 5px var(--shadow-dark),
+                inset -2px -2px 5px var(--shadow-light);
+}
+
+#llm-chord-input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.3),
+                inset 2px 2px 5px var(--shadow-dark),
+                inset -2px -2px 5px var(--shadow-light);
+    transform: scale(1.01);
+    background-color: #23242a;
+}
+
+#llm-chord-input.error:focus {
+    border-color: #ff4444;
+    box-shadow: 0 0 0 3px rgba(255, 68, 68, 0.3),
+                inset 2px 2px 5px var(--shadow-dark),
+                inset -2px -2px 5px var(--shadow-light);
+}
+
+#llm-chord-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
