@@ -498,6 +498,7 @@ function attachUIListeners() {
         });
     }
 
+    // In the llmStartButton click handler:
     if (llmStartButton) {
         llmStartButton.addEventListener('click', async () => {
             const promptValue = llmPromptInput.value.trim();
@@ -505,15 +506,14 @@ function attachUIListeners() {
                 alert("Enter a prompt first.");
                 return;
             }
-    
+
             // Default chord progression
             const defaultChords = [
                 ["C", 0.0], ["D", 2.0], ["F", 4.0], 
                 ["Ab", 6.0], ["Bb", 7.0], ["C", 8.0]
             ];
-    
-            try {
 
+            try {
                 // Show loading state
                 llmStartButton.disabled = true;
                 llmStartButton.textContent = "Generating...";
@@ -522,13 +522,11 @@ function attachUIListeners() {
                 formData.append('prompt', promptValue);
                 formData.append('chords', JSON.stringify(defaultChords));
 
-                // Mic Input for Drums   
+                // Only append drums if we have recorded audio
                 if (micBlobUrl) {
                     const response = await fetch(micBlobUrl);
                     const blob = await response.blob();
                     formData.append('drums', blob);
-                } else {
-                    formData.append('drums', null);
                 }
                 
                 const response = await fetch('http://localhost:8000/generate', {
@@ -538,29 +536,21 @@ function attachUIListeners() {
 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.detail || 'Failed to generate music');
+                    throw new Error(errorData.detail || 'Server error during music generation');
                 }
 
-                // Empty mic
+                // Clean up mic blob if it exists
                 if (micBlobUrl) {
                     URL.revokeObjectURL(micBlobUrl);
                     micBlobUrl = null;
                 }
-       
+
                 // Get the blob and file path    
                 const blob = await response.blob();
                 const filePath = response.headers.get('X-File-Path');
 
                 // Create blob URL for the audio
                 const blobUrl = URL.createObjectURL(blob);
-
-                // // Get the file path from response headers
-                // const filePath = response.headers.get('X-File-Path');
-                // console.log(`Generated file saved at: ${filePath}`);
-    
-                // // Create and play audio
-                // const audio = new Audio(url);
-                // audio.play();
                 
                 // Create a new AudioPuck with the generated audio
                 const newPuck = new AudioPuck(
@@ -584,7 +574,7 @@ function attachUIListeners() {
                 llmStartButton.textContent = "Generate";
             }
         });
-    }    
+    }
 
 
     if (llmDrumButton) {

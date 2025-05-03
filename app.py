@@ -70,7 +70,7 @@ async def generate(
             chord_progression = DEFAULT_CHORDS
 
         # Process drums from mic input
-        if drums:
+        if drums and drums.filename:
             try:
                 # Create a temporary file to save the audio blob
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
@@ -99,8 +99,8 @@ async def generate(
                 print(f"Error processing drum audio: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
         else:
-            print("No custom drums provided, using default drums")
-            drums_wav, drums_sr = DEFAULT_DRUMS_WAV, DEFAULT_DRUMS_SR
+            print("No custom drums provided, using only prompt and default chords")
+            # drums_wav, drums_sr = DEFAULT_DRUMS_WAV, DEFAULT_DRUMS_SR
 
         # Find next available file number
         while os.path.exists(f"output/{file_counter}.wav"):
@@ -110,14 +110,22 @@ async def generate(
         output_path = f"output/{file_counter}"
         output_file = f"output/{file_counter}.wav"
 
-        # Generate music using the processed drums
-        output = jasco_chords_drums.generate_music(
-            descriptions=[prompt or DEFAULT_PROMPT],
-            chords=chord_progression,
-            drums_wav=drums_wav,
-            drums_sample_rate=jasco_chords_drums.sample_rate,
-            progress=True
-        )
+        # Generate music using the custom drums
+        if drums and drums.filename:
+            output = jasco_chords_drums.generate_music(
+                descriptions=[prompt or DEFAULT_PROMPT],
+                chords=chord_progression,
+                drums_wav=drums_wav,
+                drums_sample_rate=jasco_chords_drums.sample_rate,
+                progress=True
+            )
+        else:
+            # Generate music without using custom drums
+            output = jasco_chords_drums.generate_music(
+                descriptions=[prompt or DEFAULT_PROMPT],
+                chords=chord_progression,
+                progress=True
+            )
 
         # Save the generated audio
         audio_write(
