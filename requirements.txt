@@ -1,6 +1,7 @@
 # AudioCraft requires Python 3.9, PyTorch 2.1.0
 # AudioCraft recommends installing FFMPEG: https://ffmpeg.org/download.html
 # uv pip install torch==2.1.0 -f https://download.pytorch.org/whl/cu121
+# Do note- if JASCO tells you that you don't have cuda 12.x even if you have a graphics card then, download the specific version from here https://developer.nvidia.com/cuda-toolkit-archive
 
 streamlit>=1.10.0
 torchaudio==2.1.0
@@ -10,3 +11,4 @@ git+https://git@github.com/facebookresearch/audiocraft#egg=audiocraft
 fastapi
 matplotlib
 uvicorn
+ffmpeg-python 

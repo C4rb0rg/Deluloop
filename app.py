@@ -8,6 +8,7 @@ import tempfile
 from audiocraft.models import JASCO
 from audiocraft.data.audio import audio_write
 import torchaudio
+import ffmpeg
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -28,7 +29,7 @@ jasco_chords_drums = JASCO.get_pretrained('facebook/jasco-chords-drums-400M',
 # Set default prompt, chords, drums
 DEFAULT_PROMPT = "Strings, woodwind, orchestral, symphony."
 DEFAULT_CHORDS = [('Am7', 0.0), ('D7', 5.0), ('G', 8.0)]
-DEFAULT_DRUMS_WAV, DEFAULT_DRUMS_SR = torchaudio.load("./assets/sep_drums_1.mp3")
+DEFAULT_DRUMS_WAV, DEFAULT_DRUMS_SR = torchaudio.load("./assets/sample_0.wav")
 
 # Set generation parameters
 jasco_chords_drums.set_generation_params(
@@ -71,30 +72,54 @@ async def generate(
 
         # Process drums from mic input
         if drums and drums.filename:
+            print("1")
             try:
-                # Create a temporary file to save the audio blob
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
-                    # Write the uploaded file content
+                # Save uploaded file to a temp file (original format)
+                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(drums.filename)[1], delete=False) as temp_audio:
                     content = await drums.read()
                     temp_audio.write(content)
                     temp_audio.flush()
-                
-                # Load and process the audio file
-                drums_wav, drums_sr = torchaudio.load(temp_audio.name)
-                
+                    temp_audio_path = temp_audio.name
+                    print("2")
+
+                # Convert to WAV using ffmpeg
+                temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                temp_wav.close()
+                temp_wav_path = temp_wav.name
+
+                try:
+                    (
+                        ffmpeg
+                        .input(temp_audio_path)
+                        .output(temp_wav_path, format='wav', acodec='pcm_s16le', ac=1)
+                        .run(quiet=True, overwrite_output=True)
+                    )
+                except ffmpeg.Error as e:
+                    print("ffmpeg error:", e)
+                    raise HTTPException(status_code=500, detail="Audio conversion failed")
+
+                # Load and process the WAV file
+                drums_wav, drums_sr = torchaudio.load(temp_wav_path, format="wav")
+                print("3")
+
                 # Verify audio format requirements
                 if drums_wav.shape[0] != 1:
+                    print("4")    
                     # Convert to mono if necessary
                     drums_wav = drums_wav.mean(dim=0, keepdim=True)
-                
+                    print("5")
+
                 if drums_sr != jasco_chords_drums.sample_rate:
                     # Resample to match model's sample rate
                     resampler = torchaudio.transforms.Resample(drums_sr, jasco_chords_drums.sample_rate)
                     drums_wav = resampler(drums_wav)
-                
-                # Clean up temp file
-                os.unlink(temp_audio.name)
-                
+                    print("6") 
+
+                # Clean up temp files
+                os.unlink(temp_audio_path)
+                os.unlink(temp_wav_path)
+                print("7")
+
             except Exception as e:
                 print(f"Error processing drum audio: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))

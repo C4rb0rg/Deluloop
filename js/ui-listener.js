@@ -357,7 +357,7 @@ function attachUIListeners() {
                         };
                         if (recordedChunks.length === 0) {
                             console.error("No audio data was recorded.");
-                            alert("Recording failed—no audio captured.");
+                            alert("Recording failedâ€”no audio captured.");
                             stopTracks();
                             isRecording = false;
                             return;
@@ -549,8 +549,7 @@ function attachUIListeners() {
                 const response = await fetch('http://localhost:8000/generate', {
                     method: 'POST',
                     body: formData
-                });
-
+                });   
                 if (!response.ok) {
                     const errorData = await response.json();
                     throw new Error(errorData.detail || 'Server error during music generation');
@@ -566,9 +565,13 @@ function attachUIListeners() {
                 const blob = await response.blob();
                 const filePath = response.headers.get('X-File-Path');
 
+                console.log("Generated audio blob:", blob);
+
                 // Create blob URL for the audio
                 const blobUrl = URL.createObjectURL(blob);
                 
+                console.log("Blob URL for generated audio:", blobUrl);
+
                 // Create a new AudioPuck with the generated audio
                 const newPuck = new AudioPuck(
                     pucks.length, 
