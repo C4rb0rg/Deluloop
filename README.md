@@ -14,21 +14,16 @@ The license for JASCO weights can be found [here](https://github.com/facebookres
 
 ## Features
 1. Currently, you can upload an audio file, record via mic input live, and prompt for LLM.
-![alt text](image-1.png)
 
 2. Once audio is fed via these formats, its brought in as a track with the form of a puck.
-![alt text](image-2.png)
 
 3. You can move the puck in the given space and create a unique blend based on the position.
 
 4. By default collisions and physics is triggered on- feel free to turn it off
-![alt text](image-3.png)
 
 5. Draw paths for pucks to move around in the space- adding automation to the effects. This happens in a loop
-![alt text](image-4.png)
 
 6. You can also connect pucks to group them together. So you could group specific audio loops together- the pucks also move together when a puck is connected and in path mode
-![alt text](image-5.png)
 
 7. The interface is designed with improvisation in mind so it doesn't revert back to anymore than 1 undo back
 
