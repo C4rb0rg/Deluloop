@@ -29,15 +29,25 @@ The license for JASCO weights can be found [here](https://github.com/facebookres
 
 ## Controls + Shortcuts
 Volume up/down- mouse scroll up or down while hovering over a puck
+
 Pause the puck- Double click on the specific puck to pause it
+
 Select a puck- left mouse click the puck
+
 Grab the puck- left mouse click and hold to drag around
+
 Play audio in reverse- right mouse click on top of a puck
+
 Group similar pucks together by connecting them- ctrl/cmd + left mouse click 
+
 Disconnect one of the grouped pucks- ctrl/cmd + right mouse click
+
 Draw a path- shift + right mouse click and drag in a specific path to set automation
+
 Get out of the drawn path- shift + left mouse click, either on the path or the puck
+
 pause the entire performance- spacebar
+
 ctrl+c/v/d/x/z- copy and paste, duplicate, delete, bring back a selected puck
 
 
