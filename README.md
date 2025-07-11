@@ -2,6 +2,8 @@
 An improvisational looper, powered by [JASCO](https://github.com/facebookresearch/audiocraft/blob/main/docs/JASCO.md).
 ![image showcasing the Deluloop interface](image.png)
 
+##**Test it here:** [https://c4rb0rg.github.io/Deluloop/](url)
+
 ## Usage
 - Request access to [JASCO Chords Drums](https://huggingface.co/facebook/jasco-chords-drums-400M) on Hugging Face.
 - Add Hugging Face API key as an environment variable named HF_KEY
