@@ -1,8 +1,8 @@
 # Deluloop
+## Test it here (without LLM pure audio looping): [<kbd>Click Here</kbd>](https://c4rb0rg.github.io/Deluloop/)
+
 An improvisational looper, powered by [JASCO](https://github.com/facebookresearch/audiocraft/blob/main/docs/JASCO.md).
 ![image showcasing the Deluloop interface](image.png)
-
-## Test it here (without LLM pure audio looping): [<kbd>Click Here</kbd>](https://c4rb0rg.github.io/Deluloop/)
 
 ## Usage
 - Request access to [JASCO Chords Drums](https://huggingface.co/facebook/jasco-chords-drums-400M) on Hugging Face.
